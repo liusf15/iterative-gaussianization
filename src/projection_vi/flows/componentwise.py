@@ -10,7 +10,6 @@ class ComponentwiseFlow(nn.Module):
     range_max: float = 5.0
 
     def setup(self):
-        
         param_shape = (self.d, 3 * self.num_bins + 1)
         self.spline_params = self.param(
             'spline',
@@ -40,14 +39,19 @@ class ComponentwiseFlow(nn.Module):
         y = y_t.T
         return y, logdet
 
-    def forward(self, x):
-        return self(x, inverse=False)
+    def forward(self, x, rot=None):
+        if rot is not None:
+            x = x @ rot.T
+        x, logdet = self(x, inverse=False)
+        if rot is not None:
+            x = x @ rot
+        return x, logdet
 
     def inverse(self, z):
         return self(z, inverse=True)
 
-    def reverse_kl(self, base_samples, logp_fn):
-        X, log_det = self(base_samples, inverse=True)
-        lopg = jax.vmap(logp_fn)(X)
-        return -jnp.nanmean(log_det + lopg)
+    def reverse_kl(self, base_samples, logp_fn, rot=None):
+        X, log_det = self.forward(base_samples, rot=rot)
+        logp = jax.vmap(logp_fn)(X)
+        return -jnp.nanmean(log_det + logp)
         
