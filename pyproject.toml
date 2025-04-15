@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projection_VI"  
+version = "0.1.0"   
+description = "A Python package for Projection VI" 
+authors = [{ name = "Sifan Liu", email = "sliu@flatironinstitute.org" }]
+readme = "README.md" 
+
+dependencies = [
+    "jax==0.5.2",
+    "jax_tqdm==0.3.1",
+    "matplotlib==3.10.1",
+    "numpy==2.2.3",
+    "numpyro==0.18.0",
+    "optax==0.2.4",
+    "pandas==2.2.3",
+    "scipy==1.15.2",
+    "seaborn==0.13.2"
+]
+
+[tool.setuptools]
+packages = ["projection_vi"]  # Replace with your actual package name
+
+[tool.setuptools.package-dir]
+"" = "src"  # Tells setuptools to look inside src/
+
+[project.urls]
+"Repository" = "https://github.com/liusf15/projection_VI.git"
