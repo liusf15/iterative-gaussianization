@@ -1,110 +1,88 @@
 import jax
 import jax.numpy as jnp
-from jax.scipy.stats import multivariate_normal as mvn
-from tqdm import trange
 import numpy as np
 import os
 import argparse
 import pickle
 
 from projection_vi import ComponentwiseFlow, AffineFlow
-from projection_vi.train import train
+from projection_vi.train import train, iterative_projection_mfvi
 import experiments.targets as Targets
 
-def run_experiment(posterior_name='arK', nsample=64, num_composition=1, max_deg=3, optimizer='lbfgs', max_iter=50, lr=1., savepath=None):
+
+def run_experiment(posterior_name='arK', seed=0, n_train=1000, niter=5, learning_rate=1e-3, max_iter=1000, savepath=None):
     # set up target distribution
     data_file = f"stan/{posterior_name}.json"
     target = getattr(Targets, posterior_name)(data_file)
+    logp_fn = jax.jit(target.log_prob)
     d = target.d
 
-    print("training normalizing flow ......")
-    model = TransportQMC(d, target, num_composition=num_composition, max_deg=max_deg)
-    params = model.init_params()
-    best_params = params
-    max_ess = 0
-    get_kl = jax.jit(model.reverse_kl)
-    get_ess = jax.jit(model.ess)
-    
-    for seed in range(10):
-        print("Seed:", seed)
-        rng = np.random.default_rng(seed)
+    print("Diagonal Gaussian VI")
+    affine_model = AffineFlow(d=d)
+    affine_params = affine_model.init(jax.random.key(0), jnp.zeros((1, d)))
+    key, subkey = jax.random.split(jax.random.key(seed))
+    base_samples = jax.random.normal(subkey, (n_train, d))
 
-        U = jnp.array(sample_uniform(nsample, d, rng, 'rqmc'))
-        loss_fn = lambda params: get_kl(params, U)
-
-        U_val = jnp.array(sample_uniform(nsample, d, rng, 'rqmc'))
-        val_fn = lambda params: get_ess(params, U_val)
-        
-        if optimizer == 'lbfgs':
-            final_state, logs_ess = lbfgs(loss_fn, params, val_fn, max_iter=max_iter, max_lr=lr)
-        else:
-            final_state, logs_ess = sgd(loss_fn, params, val_fn, max_iter=max_iter, lr=lr)
-        if logs_ess[-1] > max_ess:
-            best_params = final_state[0]
-            max_ess = logs_ess[-1]
-    print("Effective sample size:", max_ess)
-
-    print("estimating posterior moments ......")
     @jax.jit
-    def get_samples(U):
-        X, log_det = jax.vmap(model.forward, in_axes=(None, 0))(best_params, U)
-        log_p = jax.vmap(target.log_prob)(X)
-        log_weights = log_p + log_det
-        log_weights = jnp.nan_to_num(log_weights, nan=-jnp.inf)
-        log_weights -= jnp.max(log_weights)
-        return X, log_weights
+    def loss_fn(affine_params):
+        return affine_model.apply(affine_params, base_samples, logp_fn, method=affine_model.reverse_kl)
+    affine_params, losses = train(loss_fn, affine_params, learning_rate=learning_rate, max_iter=max_iter)
+    shift = affine_params['params']['shift']
+    scale = jax.nn.softplus(affine_params['params']['scale_logit']) * 1.2
 
-    def get_moments(X, log_weights):
-        if getattr(target, 'param_constrain', None):
-            X = target.param_constrain(np.array(X, float))
-        
-        weights = jnp.exp(log_weights - jnp.max(log_weights))
-        moments_1 = jnp.sum(weights[:, None] * X, axis=0) / jnp.sum(weights)
-        moments_2 = jnp.sum(weights[:, None] * X**2, axis=0) / jnp.sum(weights)
-        return moments_1, moments_2
-    
-    m_list = np.arange(3, 12, 2)
-    moments_1 = {}
-    moments_2 = {}
-    nrep = 50
-    rng = np.random.default_rng(2024)
-    for i in trange(nrep):
-        for m in m_list:
-            for sampler in ['mc', 'rqmc']:
-                U = sample_uniform(2**m, d, rng, sampler)
-                X, log_weights = get_samples(U)
+    @jax.jit
+    def logp_fn_shifted(x):
+        return logp_fn(x * scale + shift) + jnp.sum(jnp.log(scale))
 
-                # compute first and second moments
-                moments_1[(sampler, m, i)], moments_2[(sampler, m, i)] = get_moments(X, log_weights)
-                
+    model = ComponentwiseFlow(d=d, num_bins=10)
+    key, subkey = jax.random.split(key)
+    base_samples = jax.random.normal(subkey, (n_train, d))
+    key, subkey = jax.random.split(key)
+    log_weights_hist, samples_hist, loss_hist = iterative_projection_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, learning_rate=learning_rate, max_iter=max_iter)
+
+    moments_1 = [shift]
+    moments_2 = [jax.nn.softplus(affine_params['params']['scale_logit'])**2 + shift**2]
+    for k in range(niter):
+        transformed_samples = samples_hist[k] * scale + shift
+        transformed_samples = target.param_constrain(transformed_samples)
+        moments_1.append(jnp.mean(transformed_samples, 0)) 
+        moments_2.append(jnp.mean(transformed_samples**2, 0))
+
+    with open (f"experiments/results/{posterior_name}_mcmc_moments.pkl", "rb") as f:
+        reference_moments = pickle.load(f)
+    ref_moment_1 = reference_moments['moments_1'].mean(0)
+    ref_moment_2 = reference_moments['moments_2'].mean(0)
+
+    mse_1 = np.sum((np.array(moments_1) - ref_moment_1)**2, 1)
+    mse_2 = np.sum((np.array(moments_2) - ref_moment_2)**2, 1)
+    print(mse_1, mse_2)
     if savepath is not None:
-        results = {'flow_parameters': best_params, 
-                   'moment1': moments_1,
-                   'moment2': moments_2}
+        results = {'moment1': moments_1,
+                   'moment2': moments_2,
+                   'mse1': mse_1,
+                   'mse2': mse_2}
         os.makedirs(savepath, exist_ok=True)
-        with open(os.path.join(savepath, f'{posterior_name}_comp_{num_composition}.pkl'), 'wb') as f:
+        filename = os.path.join(savepath, f'{posterior_name}_train_{n_train}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_{seed}.pkl')
+        with open(filename, 'wb') as f:
             pickle.dump(results, f)
-        print('Results saved to', os.path.join(savepath, f'{posterior_name}.pkl'))
+        print('Results saved to', filename)
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--posterior_name', type=str, default='hmm', choices=['arK', 'gp_regr', 'hmm', 'nes_logit', 'normal_mixture'])
-    argparser.add_argument('--m', type=int, default=8)
-    argparser.add_argument('--num_composition', type=int, default=3)
-    argparser.add_argument('--max_deg', type=int, default=7)
-    argparser.add_argument('--optimizer', type=str, default='lbfgs', choices=['lbfgs', 'sgd'])
-    argparser.add_argument('--max_iter', type=int, default=400)
-    argparser.add_argument('--lr', type=float, default=1.)
-    argparser.add_argument('--savepath', type=str, default=None)
+    argparser.add_argument('--seed', type=int, default=0)
+    argparser.add_argument('--max_iter', type=int, default=500)
+    argparser.add_argument('--lr', type=float, default=1e-2)
+    argparser.add_argument('--n_train', type=int, default=1000)
+    argparser.add_argument('--savepath', type=str, default='/mnt/home/sliu1/ceph/projection_vi')
+    argparser.add_argument('--date', type=str, default='20250415')
 
     args = argparser.parse_args()
-    nsample = 2**args.m
+    savepath = os.path.join(args.savepath, args.date)
     
     run_experiment(args.posterior_name, 
-                   nsample=nsample, 
-                   num_composition=args.num_composition, 
-                   max_deg=args.max_deg, 
-                   optimizer=args.optimizer, 
+                   args.seed,
+                   n_train=args.n_train, 
+                   learning_rate=args.lr,
                    max_iter=args.max_iter, 
-                   lr=args.lr, 
-                   savepath=args.savepath)
+                   savepath=savepath)

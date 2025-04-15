@@ -174,3 +174,7 @@ cython_debug/
 .pypirc
 
 .venv_vi/
+env.sh
+run.sh
+python
+scripts/
