@@ -61,9 +61,9 @@ class arK:
 
     def param_constrain(self, X):
         if X.ndim == 1:
-            X[-1] = jnp.exp(X[-1])
+            X = X.at[-1].set(jnp.exp(X[-1]))
             return X
-        X[:, -1] = jnp.exp(X[:, -1])
+        X = X.at[:, -1].set(jnp.exp(X[:, -1]))
         return X
     
     def param_unc_names(self):
