@@ -276,6 +276,196 @@ class normal_mixture:
     def param_unc_names(self):
         return ['mu_unc', 'sigma_unc', 'theta_unc']
 
+class eight_schools:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        
+        # Stan data: J schools, y, sigma
+        self.J = self.data['J']                         # number of schools
+        self.y = jnp.array(self.data['y'])              # treatment effects
+        self.sigma = jnp.array(self.data['sigma'])      # std errors
+        self.d = self.J + 2  # dimension of unconstrained parameters = (mu_unc, tau_unc, theta_unc of length J)
+
+        def _numpyro_model():
+            
+            mu = numpyro.sample("mu", dist.Normal(0, 5))
+
+            tau_unc = numpyro.sample("tau_unc", ImproperUniform())
+            tau = numpyro.deterministic("tau", jnp.exp(tau_unc))
+            numpyro.factor("tau_prior", dist.Normal(0, 10).log_prob(tau) + tau_unc)
+
+            # theta_unc = numpyro.sample("theta_unc", ImproperUniform().expand([self.J]))
+            # theta = numpyro.deterministic("theta", mu + tau * theta_unc)
+            # numpyro.factor("theta_prior", dist.Normal(mu, tau).log_prob(theta).sum() + tau_unc * self.J)
+            theta_unc = numpyro.sample("theta_unc", dist.Normal(0, 1).expand([self.J]))
+            theta = mu + tau * theta_unc
+            
+            ll = dist.Normal(theta, self.sigma).log_prob(self.y).sum()
+            numpyro.factor("obs_ll", ll)
+
+        self.numpyro_model = _numpyro_model
+        # Seed the model for log_prob calculations
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        J = self.J
+        params = {
+            "tau_unc": x[0],
+            "mu": x[1],
+            "theta_unc": x[2 : 2 + J]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    # JIT-compile for speed
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        if X.ndim == 1:
+            tau = jnp.exp(X[0:1])
+            mu = X[1:2]
+            theta_unc = X[2:]
+            theta = mu + tau * theta_unc
+            return jnp.concatenate([mu, tau, theta])
+
+        # If X.ndim == 2, we handle multiple samples
+        tau = jnp.exp(X[:, 0:1])
+        mu = X[:, 1:2]
+        theta_unc = X[:, 2:]
+        # shape (N, J)
+        theta = mu + tau * theta_unc
+        # shape (N, J+2)
+        return jnp.hstack([mu, tau, theta])
+
+    def param_unc_names(self):
+        return ['tau_unc', 'mu', 'theta_unc']
+
+class rosenbrock:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.D = self.data['D']
+        self.d = 2*self.D
+
+        def _numpyro_model():
+            v = numpyro.sample("v", dist.Normal(1, 1).expand([self.D]))
+            theta_sample = numpyro.sample("theta", dist.Normal(v**2, .1).expand([self.D]))
+            theta = numpyro.deterministic("theta_deterministic", theta_sample)  # Include theta in the model's output
+
+        self.numpyro_model = _numpyro_model
+        # Seed the model for log_prob calculations
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+    
+    def _log_prob(self, x):
+        params = {
+            "v": x[:self.D],
+            "theta": x[self.D:],
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    # JIT-compile for speed
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        return X
+
+    def param_unc_names(self):
+        return ['v', 'theta']
+
+
+class funnel:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.D = self.data['D']
+        self.d = self.D + 1
+
+        def _numpyro_model():
+            double_log_sigma = numpyro.sample("double_log_sigma", dist.Normal(0, 3))
+            alpha_sample = numpyro.sample("alpha", dist.Normal(0, jnp.exp(0.5 * double_log_sigma)).expand([self.D]))
+            alpha = numpyro.deterministic("alpha_deterministic", alpha_sample)  # Include theta in the model's output
+
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+    
+    def _log_prob(self, x):
+        params = {
+            "double_log_sigma": x[0],
+            "alpha": x[1:],
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        return X
+
+    def param_unc_names(self):
+        return ['double_log_sigma', 'alpha']
+
+class arma:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            data = json.load(f)
+        self.T = data["T"]
+        self.y = jnp.array(data["y"])
+        self.d = 4
+
+        def _numpyro_model():
+
+            mu     = numpyro.sample("mu",     dist.Normal(0, 10))
+            phi    = numpyro.sample("phi",    dist.Normal(0, 2))
+            theta  = numpyro.sample("theta",  dist.Normal(0, 2))
+            sigma_unc = numpyro.sample("sigma_unc", ImproperUniform())
+            sigma = numpyro.deterministic("sigma", jnp.exp(sigma_unc))
+            numpyro.factor("sigma_prior", dist.Normal(0, 2.5).log_prob(sigma) + sigma_unc)
+
+            nu  = []
+            err = []
+
+            nu_1  = mu + phi*mu
+            err_1 = self.y[0] - nu_1  
+            nu.append(nu_1)
+            err.append(err_1)
+
+            for t in range(1, self.T):
+                nu_t  = mu + phi * self.y[t-1] + theta * err[t-1]
+                err_t = self.y[t] - nu_t
+                nu.append(nu_t)
+                err.append(err_t)
+
+            err = jnp.stack(err)  
+
+            numpyro.sample("err", dist.Normal(0, sigma), obs=err)
+
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "mu": x[0],
+            "phi": x[1],
+            "theta": x[2],
+            "sigma_unc": x[3]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        if X.ndim == 1:
+            X = X.at[-1].set(jnp.exp(X[-1]))
+            return X
+        X = X.at[:, -1].set(jnp.exp(X[:, -1]))
+        return X
+
+    def param_unc_names(self):
+        return ['mu', 'phi', 'theta', 'sigma_unc']
+    
 class BananaNormal:
     def __init__(self, d):
         self.d = d

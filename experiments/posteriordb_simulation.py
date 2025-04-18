@@ -5,7 +5,7 @@ import os
 import argparse
 import pickle
 
-from projection_vi import ComponentwiseFlow, AffineFlow
+from projection_vi import ComponentwiseFlow, AffineFlow, RealNVP
 from projection_vi.train import train, iterative_projection_mfvi
 import experiments.targets as Targets
 
@@ -28,7 +28,12 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, niter=5, learning
         return affine_model.apply(affine_params, base_samples, logp_fn, method=affine_model.reverse_kl)
     affine_params, losses = train(loss_fn, affine_params, learning_rate=learning_rate, max_iter=max_iter)
     shift = affine_params['params']['shift']
-    scale = jax.nn.softplus(affine_params['params']['scale_logit']) * 1.2
+    scale = jax.nn.softplus(affine_params['params']['scale_logit'])
+    transformed_samples = target.param_constrain(base_samples * scale + shift)
+    moments_1 = [jnp.mean(transformed_samples, 0)]
+    moments_2 = [jnp.mean(transformed_samples**2, 0)]
+
+    scale = scale * 1.2
 
     @jax.jit
     def logp_fn_shifted(x):
@@ -40,13 +45,26 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, niter=5, learning
     key, subkey = jax.random.split(key)
     log_weights_hist, samples_hist, loss_hist = iterative_projection_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, learning_rate=learning_rate, max_iter=max_iter)
 
-    moments_1 = [shift]
-    moments_2 = [jax.nn.softplus(affine_params['params']['scale_logit'])**2 + shift**2]
     for k in range(niter):
         transformed_samples = samples_hist[k] * scale + shift
         transformed_samples = target.param_constrain(transformed_samples)
         moments_1.append(jnp.mean(transformed_samples, 0)) 
         moments_2.append(jnp.mean(transformed_samples**2, 0))
+
+    print("Fit RealNVP")
+    model_nvp = RealNVP(dim=d, n_layers=niter, hidden_dims=[d])
+    key, subkey = jax.random.split(key)
+    params_nvp = model_nvp.init(subkey, jnp.zeros((1, d)))
+
+    @jax.jit
+    def loss_nvp(params_nvp):
+        return model_nvp.apply(params_nvp, base_samples, logp_fn, method=model_nvp.reverse_kl)
+
+    params_nvp, losses_nvp = train(loss_nvp, params_nvp, learning_rate=learning_rate, max_iter=max_iter)
+    transformed_samples_nvp, _ = model_nvp.apply(params_nvp, base_samples, method=model_nvp.forward)
+    transformed_samples_nvp = target.param_constrain(transformed_samples_nvp)
+    nvp_moment_1 = jnp.mean(transformed_samples_nvp, 0)
+    nvp_moment_2 = jnp.mean(transformed_samples_nvp**2, 0)
 
     with open (f"experiments/results/{posterior_name}_mcmc_moments.pkl", "rb") as f:
         reference_moments = pickle.load(f)
@@ -60,7 +78,9 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, niter=5, learning
         results = {'moment1': moments_1,
                    'moment2': moments_2,
                    'mse1': mse_1,
-                   'mse2': mse_2}
+                   'mse2': mse_2,
+                   'nvp_mse1': np.sum((nvp_moment_1 - ref_moment_1)**2),
+                   'nvp_mse2': np.sum((nvp_moment_2 - ref_moment_2)**2),}
         os.makedirs(savepath, exist_ok=True)
         filename = os.path.join(savepath, f'{posterior_name}_train_{n_train}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_{seed}.pkl')
         with open(filename, 'wb') as f:
@@ -74,6 +94,7 @@ if __name__ == '__main__':
     argparser.add_argument('--max_iter', type=int, default=500)
     argparser.add_argument('--lr', type=float, default=1e-2)
     argparser.add_argument('--n_train', type=int, default=1000)
+    argparser.add_argument('--niter', type=int, default=5)
     argparser.add_argument('--savepath', type=str, default='/mnt/home/sliu1/ceph/projection_vi')
     argparser.add_argument('--date', type=str, default='20250415')
 
@@ -83,6 +104,7 @@ if __name__ == '__main__':
     run_experiment(args.posterior_name, 
                    args.seed,
                    n_train=args.n_train, 
+                   niter=args.niter,
                    learning_rate=args.lr,
                    max_iter=args.max_iter, 
                    savepath=savepath)
