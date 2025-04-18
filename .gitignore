@@ -179,3 +179,5 @@ run.sh
 python
 scripts/
 .vscode/
+stan/
+*results/
