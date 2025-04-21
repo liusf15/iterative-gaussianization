@@ -126,10 +126,10 @@ class ComponentwiseCDF(nn.Module):
             shift, scale_logit = jnp.split(params_i, 2, axis=-1)
             scale = jax.nn.softplus(scale_logit + inverse_softplus(1.))
             if not inverse:
-                u_i = norm.cdf((x_i - shift) / scale).mean()
+                u_i = norm.cdf(x_i, loc=shift, scale=scale).mean()
                 u_i = jnp.clip(u_i, -1e10, 1e10)
                 y_i = norm.ppf(u_i)
-                logdet_i = norm.logpdf(x_i, loc=shift, scale=scale).sum() - norm.logpdf(y_i)
+                logdet_i = norm.logpdf(x_i, loc=shift, scale=scale).mean() - norm.logpdf(y_i)
             else:
                 raise NotImplementedError("Inverse is not implemented.")    
             return y_i, logdet_i
