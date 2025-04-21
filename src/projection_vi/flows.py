@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 from jax.nn import softplus
+from jax.scipy.stats import norm
 import distrax
 from typing import Sequence, Callable
 
@@ -85,6 +86,55 @@ class ComponentwiseFlow(nn.Module):
             return y_i, logdet_i
 
         y_t, logdet_t = jax.vmap(spline_1d, in_axes=(0, 1))(self.spline_params, x)
+        logdet = jnp.sum(logdet_t, axis=0)  
+        y = y_t.T
+        return y, logdet
+
+    def forward(self, x, rot=None):
+        if rot is not None:
+            x = x @ rot.T
+        x, logdet = self(x, inverse=False)
+        if rot is not None:
+            x = x @ rot
+        return x, logdet
+
+    def inverse(self, z):
+        return self(z, inverse=True)
+
+    def reverse_kl(self, base_samples, logp_fn, rot=None):
+        X, log_det = self.forward(base_samples, rot=rot)
+        logp = jax.vmap(logp_fn)(X)
+        logp = jnp.where(jnp.abs(logp) < 1e10, logp, jnp.nan)
+        return -jnp.nanmean(log_det + logp)
+    
+class ComponentwiseCDF(nn.Module):
+    d: int
+    num_bins: int = 10
+
+    def setup(self):
+        param_shape = (self.d, 2 * self.num_bins)
+        self.params = self.param(
+            'shift_scale',
+            nn.initializers.zeros_init(),
+            param_shape
+        )
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray, inverse: bool = False):
+        
+        def bij(params_i, x_i):
+            shift, scale_logit = jnp.split(params_i, 2, axis=-1)
+            scale = jax.nn.softplus(scale_logit + inverse_softplus(1.))
+            if not inverse:
+                u_i = norm.cdf((x_i - shift) / scale).mean()
+                u_i = jnp.clip(u_i, -1e10, 1e10)
+                y_i = norm.ppf(u_i)
+                logdet_i = norm.logpdf(x_i, loc=shift, scale=scale).sum() - norm.logpdf(y_i)
+            else:
+                raise NotImplementedError("Inverse is not implemented.")    
+            return y_i, logdet_i
+
+        y_t, logdet_t = jax.vmap(bij, in_axes=(0, 1))(self.params, x)
         logdet = jnp.sum(logdet_t, axis=0)  
         y = y_t.T
         return y, logdet
