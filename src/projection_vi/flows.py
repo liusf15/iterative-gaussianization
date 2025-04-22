@@ -71,6 +71,12 @@ class ComponentwiseFlow(nn.Module):
     @nn.compact
     def __call__(self, x: jnp.ndarray, inverse: bool = False):
         
+        if x.ndim == 1:
+            x = x[None, :]  # Add batch dimension
+            single_input = True
+        else:
+            single_input = False
+            
         def spline_1d(params_i, x_i):
             spline = distrax.RationalQuadraticSpline(
                 params=params_i,
@@ -88,6 +94,11 @@ class ComponentwiseFlow(nn.Module):
         y_t, logdet_t = jax.vmap(spline_1d, in_axes=(0, 1))(self.spline_params, x)
         logdet = jnp.sum(logdet_t, axis=0)  
         y = y_t.T
+
+        if single_input:
+            y = y[0]
+            logdet = logdet[0]
+
         return y, logdet
 
     def forward(self, x, rot=None):
@@ -98,8 +109,13 @@ class ComponentwiseFlow(nn.Module):
             x = x @ rot
         return x, logdet
 
-    def inverse(self, z):
-        return self(z, inverse=True)
+    def inverse(self, z, rot=None):
+        if rot is not None:
+            z = z @ rot.T
+        z, logdet = self(z, inverse=True)
+        if rot is not None:
+            z = z @ rot
+        return z, logdet
 
     def reverse_kl(self, base_samples, logp_fn, rot=None):
         X, log_det = self.forward(base_samples, rot=rot)
