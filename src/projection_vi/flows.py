@@ -69,7 +69,7 @@ class ComponentwiseFlow(nn.Module):
         )
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, inverse: bool = False):
+    def __call__(self, x: jnp.ndarray, inverse: bool = False, return_jac=False):
         
         if x.ndim == 1:
             x = x[None, :]  # Add batch dimension
@@ -82,7 +82,7 @@ class ComponentwiseFlow(nn.Module):
                 params=params_i,
                 range_min=self.range_min,
                 range_max=self.range_max,
-                boundary_slopes='unconstrained'
+                boundary_slopes='identity'
             )
 
             if not inverse:
@@ -92,12 +92,18 @@ class ComponentwiseFlow(nn.Module):
             return y_i, logdet_i
 
         y_t, logdet_t = jax.vmap(spline_1d, in_axes=(0, 1))(self.spline_params, x)
-        logdet = jnp.sum(logdet_t, axis=0)  
         y = y_t.T
+        logdet = logdet_t.T
 
         if single_input:
             y = y[0]
             logdet = logdet[0]
+
+            if not return_jac:
+                logdet = jnp.sum(logdet)
+        else:
+            if not return_jac:
+                logdet = jnp.sum(logdet, axis=1)  
 
         return y, logdet
 
@@ -142,10 +148,10 @@ class ComponentwiseCDF(nn.Module):
             shift, scale_logit = jnp.split(params_i, 2, axis=-1)
             scale = jax.nn.softplus(scale_logit + inverse_softplus(1.))
             if not inverse:
-                u_i = norm.cdf(x_i, loc=shift, scale=scale).mean()
+                u_i = norm.cdf(x_i, loc=shift[:, None], scale=scale[:, None]).mean(0)
                 u_i = jnp.clip(u_i, -1e10, 1e10)
                 y_i = norm.ppf(u_i)
-                logdet_i = norm.logpdf(x_i, loc=shift, scale=scale).mean() - norm.logpdf(y_i)
+                logdet_i = norm.logpdf(x_i, loc=shift[:, None], scale=scale[:, None]).mean(0) - norm.logpdf(y_i)
             else:
                 raise NotImplementedError("Inverse is not implemented.")    
             return y_i, logdet_i
