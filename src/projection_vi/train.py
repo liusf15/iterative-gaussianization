@@ -77,7 +77,7 @@ def iterative_projection_mfvi(model, logp_fn, niter, key, base_samples, learning
         print("Iteration:", k, 'KL:', -log_weights_hist[-1].mean(), 'ESS:', ess)
     return jnp.stack(log_weights_hist), jnp.stack(samples_hist), jnp.array(loss_hist)
 
-def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, learning_rate=1e-3, max_iter=1000, rank=0, weighted=False):
+def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, learning_rate=1e-3, max_iter=1000, rank=0, weighted=False, rotate_first_iter=True):
     d = model.d
     n_train = base_samples.shape[0]
     
@@ -123,7 +123,9 @@ def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, lea
     logq = mvn.logpdf(base_samples, mean=jnp.zeros(d), cov=jnp.eye(d))
     val_logq = mvn.logpdf(val_samples, mean=jnp.zeros(d), cov=jnp.eye(d))
     
-    if rank == 0:
+    if not rotate_first_iter:
+        rot = jnp.eye(d)
+    elif rank == 0:
         key, subkey = jax.random.split(key)
         rot = sample_ortho(d, subkey)
     else:

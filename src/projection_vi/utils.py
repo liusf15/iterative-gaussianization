@@ -1,5 +1,7 @@
 import jax
 import jax.numpy as jnp
+from jax.nn import softplus
+inverse_softplus = lambda x: jnp.log(jnp.exp(x) - 1.)
 
 def sample_ortho(d, key):
     A = jax.random.normal(key=key, shape=(d, d))
