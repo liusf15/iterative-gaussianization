@@ -569,7 +569,55 @@ class irt_2pl:
     
     def param_unc_names(self):
         return ['theta', 'sigma_log_a_unc', 'log_a_std', 'mu_b', 'sigma_b_unc', 'b_std']
+
+class glmm_poisson:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.n = self.data['n']
+        self.C = jnp.array(self.data['C'])
+        self.year = jnp.array(self.data['year'])
+        self.year_squared = self.year**2
+        self.year_cubed = self.year**3
+        self.x = jnp.hstack([self.year[:, None], self.year_squared[:, None], self.year_cubed[:, None]]) # (n, 3)
+        self.d = 5 + self.n
+
+        def _numpyro_model():
+            alpha = numpyro.sample("alpha", dist.Normal(0, 5))
+            beta = numpyro.sample("beta", dist.Normal(0, 5).expand([3]))
+            sigma_unc = numpyro.sample("sigma_unc", dist.Normal(0, 1))
+            sigma = jnp.exp(sigma_unc)
+            eps_std = numpyro.sample("eps_std", dist.Normal(0, 1).expand([self.n]))
+
+            rate = jnp.exp(alpha + self.x @ beta + eps_std * sigma)
+            numpyro.sample("C", dist.Poisson(rate), obs=self.C)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "alpha": x[0],
+            "beta": x[1:4],
+            "sigma_unc": x[4],
+            "eps_std": x[5:],
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        if x.ndim == 1:
+            return jnp.array([
+                x[:4],
+                jnp.exp(x[4]),
+                x[5:] * jnp.exp(x[4]),
+            ])
+        return jnp.hstack([x[:, :4], jnp.exp(x[:, 4:5]), x[:, 5:] * jnp.exp(x[:, 4:5])])
     
+    def param_unc_names(self):
+        return ['alpha', 'beta', 'sigma_unc', 'eps_std']
+    
+
 class rosenbrock:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
