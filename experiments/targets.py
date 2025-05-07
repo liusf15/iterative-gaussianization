@@ -506,7 +506,70 @@ class radon:
     def param_unc_names(self):
         return ['alpha', 'beta', 'sigma_y_unc']
 
+class irt_2pl:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.I = self.data['I']
+        self.J = self.data['J']
+        self.y = jnp.array(self.data['y']) # shape (I, J)
+        self.d = self.I * 2 + self.J + 3
 
+        def _numpyro_model():
+            theta = numpyro.sample("theta", dist.Normal(0, 1).expand([self.J]))
+
+            sigma_log_a_unc = numpyro.sample("sigma_log_a_unc", dist.Normal(0, 2))
+            sigma_log_a = jnp.exp(sigma_log_a_unc)
+
+            log_a_std = numpyro.sample("log_a_std", dist.Normal(0, 1).expand([self.I]))
+            log_a = log_a_std * sigma_log_a
+
+            a = jnp.exp(log_a) # (I, )
+            
+            mu_b = numpyro.sample("mu_b", dist.Normal(0, 5))
+
+            sigma_b_unc = numpyro.sample("sigma_b_unc", dist.Normal(0, 2))
+            sigma_b = jnp.exp(sigma_b_unc)
+
+            b_std = numpyro.sample("b_std", dist.Normal(0, 1).expand([self.I]))
+            b = sigma_b * b_std + mu_b
+
+            logits = a[:, None] * (theta - b[:, None])
+
+            numpyro.sample("y", dist.Bernoulli(logits=logits), obs=self.y)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "theta": x[:self.J],
+            "sigma_log_a_unc": x[self.J],
+            "log_a_std": x[(self.J+1) : (self.J+1+self.I)],
+            "mu_b": x[(self.J+1+self.I)],
+            "sigma_b_unc": x[(self.J+1+self.I+1)],
+            "b_std": x[(self.J+1+self.I+2):],
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        X = jnp.atleast_2d(x)
+        theta = X[:, :self.J]
+        sigma_log_a = jnp.exp(X[:, self.J:self.J + 1])
+        log_a = X[:, self.J + 1: self.J + 1 + self.I] * sigma_log_a
+        mu_b = X[:, self.J + 1 + self.I: self.J + 1 + self.I + 1]
+        sigma_b = jnp.exp(X[:, self.J + 1 + self.I + 1: self.J + 1 + self.I + 2])
+        b = sigma_b * X[:, self.J + 1 + self.I + 2:] + mu_b
+
+        X = jnp.hstack([theta, sigma_log_a, log_a, mu_b, sigma_b, b])
+        X = X.reshape(x.shape)
+        return X
+    
+    def param_unc_names(self):
+        return ['theta', 'sigma_log_a_unc', 'log_a_std', 'mu_b', 'sigma_b_unc', 'b_std']
+    
 class rosenbrock:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
