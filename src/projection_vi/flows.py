@@ -59,6 +59,7 @@ class ComponentwiseFlow(nn.Module):
     num_bins: int = 10
     range_min: float = -5.0
     range_max: float = 5.0
+    boundary_slopes: str = 'identity'
 
     def setup(self):
         param_shape = (self.d, 3 * self.num_bins + 1)
@@ -82,7 +83,7 @@ class ComponentwiseFlow(nn.Module):
                 params=params_i,
                 range_min=self.range_min,
                 range_max=self.range_max,
-                boundary_slopes='identity'
+                boundary_slopes=self.boundary_slopes
             )
 
             if not inverse:
