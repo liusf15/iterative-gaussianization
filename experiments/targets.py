@@ -462,6 +462,50 @@ class mesquite:
     def param_unc_names(self):
         return ['beta', 'sigma_unc']
 
+class radon:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.N = self.data['N']
+        self.floor_measure = jnp.array(self.data['floor_measure'])
+        self.log_radon = jnp.array(self.data['log_radon'])
+        self.d = 3
+
+        def _numpyro_model():
+            sigma_y_unc = numpyro.sample("sigma_y_unc", ImproperUniform())
+            sigma_y = jnp.exp(sigma_y_unc)
+            numpyro.factor("sigma_y_jac", dist.Normal().log_prob(sigma_y) + sigma_y_unc)
+            alpha = numpyro.sample("alpha", dist.Normal(0, 10))
+            beta = numpyro.sample("beta", dist.Normal(0, 10))
+
+            mu = alpha + beta * self.floor_measure
+            numpyro.sample("log_radon", dist.Normal(mu, sigma_y), obs=self.log_radon)
+        
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "alpha": x[0],
+            "beta": x[1],
+            "sigma_y_unc": x[2]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        if X.ndim == 1:
+            return jnp.array([
+                X[0],
+                X[1],
+                jnp.exp(X[2]),
+            ])
+        return jnp.hstack([X[:, 0:1], X[:, 1:2], jnp.exp(X[:, 2:3])])
+    
+    def param_unc_names(self):
+        return ['alpha', 'beta', 'sigma_y_unc']
+
 
 class rosenbrock:
     def __init__(self, data_file):
