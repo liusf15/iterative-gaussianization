@@ -539,6 +539,36 @@ class arma:
     def param_unc_names(self):
         return ['mu', 'phi', 'theta', 'sigma_unc']
 
+class BLR:
+    def __init__(self, X, y, prior_scale=1.):
+        self.X = X
+        self.y = y
+        self.prior_scale = prior_scale
+        self.n, self.d = X.shape
+
+        def _numpyro_model():
+            beta = numpyro.sample("beta", dist.Normal(0, prior_scale).expand([self.d]))
+            logits = jnp.dot(self.X, beta)
+            numpyro.sample("y", dist.Bernoulli(logits=logits), obs=self.y)
+
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.key(0))
+    
+    def _log_prob(self, x):
+        params = {
+            "beta": x
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        return X
+    
+    def param_unc_names(self):
+        return ['beta']
+    
 class BananaNormal:
     def __init__(self, d):
         self.d = d
