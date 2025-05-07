@@ -659,6 +659,44 @@ class kidscore_interaction:
     def param_unc_names(self):
         return ['beta', 'sigma_unc']
 
+class sesame:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.N = self.data['N']
+        self.encouraged = jnp.array(self.data['encouraged'])
+        self.watched = jnp.array(self.data['watched'])
+        self.d = 3
+        def _numpyro_model():
+            beta = numpyro.sample("beta", ImproperUniform().expand([2]))
+            sigma_unc = numpyro.sample("sigma_unc", ImproperUniform())
+            sigma = jnp.exp(sigma_unc)
+            numpyro.factor("sigma_jac", sigma_unc)
+            numpyro.sample("watched", dist.Normal(beta[0] + beta[1] * self.encouraged, sigma), obs=self.watched)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "beta": x[:2],
+            "sigma_unc": x[2]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        if x.ndim == 1:
+            return jnp.array([
+                x[:2],
+                jnp.exp(x[2]),
+            ])
+        return jnp.hstack([x[:, :2], jnp.exp(x[:, 2:3])])
+    
+    def param_unc_names(self):
+        return ['beta', 'sigma_unc']
+
 class rosenbrock:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
