@@ -697,6 +697,43 @@ class sesame:
     def param_unc_names(self):
         return ['beta', 'sigma_unc']
 
+class wells:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.N = self.data['N']
+        self.switched = jnp.array(self.data['switched'])
+        self.dist = jnp.array(self.data['dist'])
+        self.arsenic = jnp.array(self.data['arsenic'])
+        self.educ = jnp.array(self.data['educ'])
+        self.dist100 = self.dist / 100
+        self.educ4 = self.educ / 4
+        self.x = jnp.hstack([self.dist100[:, None], self.arsenic[:, None], self.educ4[:, None]]) # (N, 3)
+        self.d = 4
+
+        def _numpyro_model():
+            alpha = numpyro.sample("alpha", ImproperUniform())
+            beta = numpyro.sample("beta", ImproperUniform().expand([3]))
+            numpyro.sample("switched", dist.BernoulliLogits(alpha + self.x @ beta), obs=self.switched)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "alpha": x[0],
+            "beta": x[1:],
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        return x
+
+    def param_unc_names(self):
+        return ['alpha', 'beta']
+
 class rosenbrock:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
