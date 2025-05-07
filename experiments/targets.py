@@ -616,7 +616,48 @@ class glmm_poisson:
     
     def param_unc_names(self):
         return ['alpha', 'beta', 'sigma_unc', 'eps_std']
+
+class kidscore_interaction:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.N = self.data['N']
+        self.kid_score = jnp.array(self.data['kid_score'])
+        self.mom_iq = jnp.array(self.data['mom_iq'])
+        self.mom_hs = jnp.array(self.data['mom_hs'])
+        self.inter= self.mom_iq * self.mom_hs
+        self.d = 5
+
+        def _numpyro_model():
+            sigma_unc = numpyro.sample("sigma_unc", ImproperUniform())
+            sigma = jnp.exp(sigma_unc)
+            numpyro.factor("sigma_jac", dist.Cauchy(0, 2.5).log_prob(sigma) + sigma_unc)
+            beta = numpyro.sample("beta", ImproperUniform().expand([4]))
+            mu = beta[0] + beta[1] * self.mom_hs + beta[2] * self.mom_iq + beta[3] * self.inter
+            numpyro.sample("kid_score", dist.Normal(mu, sigma), obs=self.kid_score)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
     
+    def _log_prob(self, x):
+        params = {
+            "beta": x[:4],
+            "sigma_unc": x[4]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        if x.ndim == 1:
+            return jnp.array([
+                x[:4],
+                jnp.exp(x[4]),
+            ])
+        return jnp.hstack([x[:, :4], jnp.exp(x[:, 4:5])])
+
+    def param_unc_names(self):
+        return ['beta', 'sigma_unc']
 
 class rosenbrock:
     def __init__(self, data_file):
