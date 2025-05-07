@@ -141,10 +141,11 @@ def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, lea
             H = (weights[:, None] * relative_scores).T @ relative_scores
         eigvals, eigvecs = jnp.linalg.eigh(H)
         eigvecs = eigvecs[:, ::-1]
-        U_r = eigvecs[:, :rank]
-        key, subkey = jax.random.split(key)
-        rot = complete_orthonormal_basis(U_r, subkey)
-        rot = rot.T
+        rot = eigvecs.T # first iteration, use all eigenvectors; no randomness
+        # U_r = eigvecs[:, :rank]
+        # key, subkey = jax.random.split(key)
+        # rot = complete_orthonormal_basis(U_r, subkey)
+        # rot = rot.T
 
 
     val_KL_hist = []
