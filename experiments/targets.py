@@ -124,7 +124,6 @@ class gp_regr:
     def param_unc_names(self):
         return ['rho_unc', 'alpha_unc', 'sigma_unc']
 
-
 class garch:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
@@ -194,8 +193,6 @@ class garch:
     
     def param_unc_names(self):
         return ['mu', 'alpha0_unc', 'alpha1_unc', 'beta1_unc']
-
-
 
 class hmm:
     def __init__(self, data_file):
@@ -414,6 +411,58 @@ class eight_schools:
     def param_unc_names(self):
         return ['tau_unc', 'mu', 'theta_unc']
 
+
+class mesquite:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        
+        self.N = self.data['N']
+        self.weight = jnp.array(self.data['weight'])
+        self.diam1 = jnp.array(self.data['diam1'])
+        self.diam2 = jnp.array(self.data['diam2'])
+        self.canopy_height = jnp.array(self.data['canopy_height'])
+        self.total_height = jnp.array(self.data['total_height'])
+        self.density = jnp.array(self.data['density'])
+        self.group = jnp.array(self.data['group'])
+        self.d = 8
+
+        def _numpyro_model():
+            beta = numpyro.sample("beta", ImproperUniform().expand([7]))
+            sigma_unc = numpyro.sample("sigma_unc", ImproperUniform())
+            sigma = jnp.exp(sigma_unc)
+            numpyro.factor("sigma_jac", sigma_unc)
+
+            mean = beta[0] + beta[1] * self.diam1 + beta[2] * self.diam2 + beta[3] * self.canopy_height + beta[4] * self.total_height + beta[5] * self.density + beta[6] * self.group
+
+            numpyro.sample("weight", dist.Normal(mean, sigma), obs=self.weight)
+
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.key(0))
+    
+    def _log_prob(self, x):
+        params = {
+            "beta": x[:-1],
+            "sigma_unc": x[-1]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        if X.ndim == 1:
+            return jnp.array([
+                X[:-1],
+                jnp.exp(X[-1:]),
+            ])
+
+        return jnp.hstack([X[:, :-1], jnp.exp(X[:, -1:])])
+    
+    def param_unc_names(self):
+        return ['beta', 'sigma_unc']
+
+
 class rosenbrock:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
@@ -446,7 +495,6 @@ class rosenbrock:
 
     def param_unc_names(self):
         return ['v', 'theta']
-
 
 class funnel:
     def __init__(self, data_file):
@@ -568,7 +616,7 @@ class BLR:
     
     def param_unc_names(self):
         return ['beta']
-    
+
 class BananaNormal:
     def __init__(self, d):
         self.d = d
