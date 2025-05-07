@@ -123,7 +123,80 @@ class gp_regr:
     
     def param_unc_names(self):
         return ['rho_unc', 'alpha_unc', 'sigma_unc']
+
+
+class garch:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            data = json.load(f)
+        self.T = data["T"]
+        self.y = jnp.array(data["y"])
+        self.sigma1 = data["sigma1"]
+        self.d = 4
+
+        def _numpyro_model():
+            mu = numpyro.sample("mu", ImproperUniform())
+
+            alpha0_unc = numpyro.sample("alpha0_unc", ImproperUniform())
+            alpha0 = jnp.exp(alpha0_unc)                               # >0
+            numpyro.factor("alpha0_jac", alpha0_unc)  
+
+            alpha1_unc = numpyro.sample("alpha1_unc", ImproperUniform())
+            alpha1 = 1 / (1 + jnp.exp(-alpha1_unc))  # (0,1)
+            numpyro.factor("alpha1_jac", jnp.log(alpha1) + jnp.log(1 - alpha1))  # Jacobian −log(scale)
+
+            beta1_unc = numpyro.sample("beta1_unc", ImproperUniform())    # (0,1)
+            beta1  = (1. - alpha1) / (1 + jnp.exp(-beta1_unc))                         # (0,1−α1)
+            numpyro.factor("beta1_jac", jnp.log(beta1) + jnp.log(1 - beta1 / (1 - alpha1)))         # Jacobian −log(scale)
+
+            # ---- GARCH recursion --------------------------------
+            sigma = jnp.zeros(self.T)
+            sigma = sigma.at[0].set(self.sigma1)
+            for t in range(1, self.T):
+                sigma_t = jnp.sqrt(alpha0
+                                   + alpha1 * (self.y[t-1] - mu)**2
+                                   + beta1  * sigma[t-1]**2)
+                sigma   = sigma.at[t].set(sigma_t)
+
+            # ---- likelihood -------------------------------------
+            ll = dist.Normal(mu, sigma).log_prob(self.y).sum()
+            numpyro.factor("obs_ll", ll)
+
+        self.numpyro_model = _numpyro_model
+        # Seed the model for log_prob calculations
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "mu": x[0],
+            "alpha0_unc": x[1],
+            "alpha1_unc": x[2],
+            "beta1_unc": x[3]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
     
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        if X.ndim == 1:
+            return jnp.array([
+                X[0],
+                jnp.exp(X[1]),
+                1 / (1 + jnp.exp(-X[2])),
+                (1. - 1 / (1 + jnp.exp(-X[2]))) / (1 + jnp.exp(-X[3]))
+            ])
+
+        return jnp.hstack([X[:, 0:1], 
+                           jnp.exp(X[:, 1:2]), 
+                           1 / (1 + jnp.exp(-X[:, 2:3])), 
+                           (1 - 1 / (1 + jnp.exp(-X[:, 2:3]))) * (1 + jnp.exp(-X[:, 3:4]))])
+    
+    def param_unc_names(self):
+        return ['mu', 'alpha0_unc', 'alpha1_unc', 'beta1_unc']
+
+
+
 class hmm:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
@@ -465,7 +538,7 @@ class arma:
 
     def param_unc_names(self):
         return ['mu', 'phi', 'theta', 'sigma_unc']
-    
+
 class BananaNormal:
     def __init__(self, d):
         self.d = d
