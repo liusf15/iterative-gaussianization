@@ -734,6 +734,73 @@ class wells:
     def param_unc_names(self):
         return ['alpha', 'beta']
 
+class pilots:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.N = self.data['N']
+        self.n_groups = self.data['n_groups']
+        self.n_scenarios = self.data['n_scenarios']
+        self.group_id = jnp.array(self.data['group_id'])
+        self.scenario_id = jnp.array(self.data['scenario_id'])
+        self.y = jnp.array(self.data['y'])
+        self.d = 5 + self.n_groups + self.n_scenarios
+
+        def _numpyro_model():
+            sigma_a_unc = numpyro.sample("sigma_a_unc", ImproperUniform())
+            sigma_a = 100 / (1 + jnp.exp(-sigma_a_unc))
+            numpyro.factor("sigma_a_jac", jnp.log(sigma_a) + jnp.log(1 - sigma_a / 100))
+
+            sigma_b_unc = numpyro.sample("sigma_b_unc", ImproperUniform())
+            sigma_b = 100 / (1 + jnp.exp(-sigma_b_unc))
+            numpyro.factor("sigma_b_jac", jnp.log(sigma_b) + jnp.log(1 - sigma_b / 100))
+
+            sigma_y_unc = numpyro.sample("sigma_y_unc", ImproperUniform())
+            sigma_y = 100 / (1 + jnp.exp(-sigma_y_unc))
+            numpyro.factor("sigma_y_jac", jnp.log(sigma_y) + jnp.log(1 - sigma_y / 100))
+
+
+            mu_a = numpyro.sample("mu_a", dist.Normal(0, 1))
+            a = numpyro.sample("a", dist.Normal(10 * mu_a * jnp.ones(self.n_groups), sigma_a))
+
+            mu_b = numpyro.sample("mu_b", dist.Normal(0, 1))
+            b = numpyro.sample("b", dist.Normal(10 * mu_b * jnp.ones(self.n_scenarios), sigma_b))
+
+            numpyro.sample("y", dist.Normal(a[self.group_id] + b[self.scenario_id], sigma_y), obs=self.y)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+        
+    def _log_prob(self, x):
+        params = {
+            "a": x[:self.n_groups],
+            "b": x[self.n_groups:self.n_groups + self.n_scenarios],
+            "mu_a": x[self.n_groups + self.n_scenarios],
+            "mu_b": x[self.n_groups + self.n_scenarios + 1],
+            "sigma_a_unc": x[self.n_groups + self.n_scenarios + 2],
+            "sigma_b_unc": x[self.n_groups + self.n_scenarios + 3],
+            "sigma_y_unc": x[self.n_groups + self.n_scenarios + 4]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        t = self.n_groups + self.n_scenarios
+        if x.ndim == 1:
+            return jnp.array([
+                x[:t + 2],
+                100 / (1 + jnp.exp(-x[t + 2: t+3])),
+                100 / (1 + jnp.exp(-x[t + 3: t+4])),
+                100 / (1 + jnp.exp(-x[t + 4: ]))
+            ])
+        return jnp.hstack([x[:, :t + 2], 
+                           100 / (1 + jnp.exp(-x[:, t + 2: t + 3])),
+                           100 / (1 + jnp.exp(-x[:, t + 3: t + 4])),
+                           100 / (1 + jnp.exp(-x[:, t + 4:]))])
+    def param_unc_names(self):
+        return ['a', 'b', 'mu_a', 'mu_b', 'sigma_a_unc', 'sigma_b_unc', 'sigma_y_unc']
+
 class rosenbrock:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
