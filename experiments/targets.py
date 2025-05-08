@@ -801,6 +801,50 @@ class pilots:
     def param_unc_names(self):
         return ['a', 'b', 'mu_a', 'mu_b', 'sigma_a_unc', 'sigma_b_unc', 'sigma_y_unc']
 
+class M0:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.M = self.data['M']
+        self.T = self.data['T']
+        self.y = jnp.array(self.data['y']) # (M, T)
+        self.s = jnp.sum(self.y, axis=1)
+        self.d = 2
+
+        def _numpyro_model():
+            omega_unc = numpyro.sample("omega_unc", ImproperUniform())
+            omega = 1 / (1 + jnp.exp(-omega_unc))
+            numpyro.factor("omega_jac", jnp.log(omega) + jnp.log(1 - omega))
+
+            p_unc = numpyro.sample("p_unc", ImproperUniform())
+            p = 1 / (1 + jnp.exp(-p_unc))
+            numpyro.factor("p_jac", jnp.log(p) + jnp.log(1 - p))
+
+            log_prob_z1 = dist.Bernoulli(omega).log_prob(1) + dist.Binomial(self.T, p).log_prob(self.s)
+            log_prob_z0 = jnp.where(self.s > 0, -jnp.inf, dist.Bernoulli(omega).log_prob(0))
+            total_log_prob = logsumexp(jnp.stack([log_prob_z1, log_prob_z0]), axis=0)
+            numpyro.factor("log_prob", total_log_prob.sum())
+
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.key(0))
+    
+    def _log_prob(self, x):
+        params = {
+            "omega_unc": x[0],
+            "p_unc": x[1],
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        return 1 / (1 + jnp.exp(-x))
+    
+    def param_unc_names(self):
+        return ['omega_unc', 'p_unc']
+
+
 class rosenbrock:
     def __init__(self, data_file):
         with open(data_file, 'r') as f:
@@ -917,10 +961,8 @@ class arma:
 
     def param_constrain(self, X):
         if X.ndim == 1:
-            X = X.at[-1].set(jnp.exp(X[-1]))
-            return X
-        X = X.at[:, -1].set(jnp.exp(X[:, -1]))
-        return X
+            return jnp.array([X[:3], jnp.exp(X[3:])])
+        return jnp.hstack([X[:, :3], jnp.exp(X[:, 3:])])
 
     def param_unc_names(self):
         return ['mu', 'phi', 'theta', 'sigma_unc']
