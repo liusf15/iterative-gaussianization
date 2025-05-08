@@ -77,7 +77,7 @@ def iterative_projection_mfvi(model, logp_fn, niter, key, base_samples, learning
         print("Iteration:", k, 'KL:', -log_weights_hist[-1].mean(), 'ESS:', ess)
     return jnp.stack(log_weights_hist), jnp.stack(samples_hist), jnp.array(loss_hist)
 
-def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, learning_rate=1e-3, max_iter=1000, rank0=0, rank=0, weighted=False, rotate_first_iter=True):
+def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, learning_rate=1e-3, max_iter=1000, rank0=0, rank=0, weighted=False):
     d = model.d
     n_train = base_samples.shape[0]
     

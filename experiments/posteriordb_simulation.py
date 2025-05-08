@@ -7,8 +7,8 @@ import pickle
 import pandas as pd
 from jax.scipy.optimize import minimize
 
-from projection_vi import ComponentwiseFlow, AffineFlow, RealNVP, ComponentwiseCDF
-from projection_vi.train import train, iterative_projection_mfvi, iterative_AS_mfvi
+from projection_vi import ComponentwiseFlow, AffineFlow, RealNVP
+from projection_vi.train import train, iterative_AS_mfvi
 import experiments.targets as Targets
 from projection_vi.utils import softplus, inverse_softplus
 
@@ -76,7 +76,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
     def logp_fn_shifted(x):
         return logp_fn(x * scale + shift) + jnp.sum(jnp.log(scale))
 
-    def process_raw_samples(raw_samples):
+    def process_raw_samples(raw_samples, scale=1., shift=0.):
         samples_constrain = target.param_constrain(raw_samples * scale + shift)
         moment_1 = np.mean(samples_constrain, axis=0)
         moment_2 = np.mean(samples_constrain**2, axis=0)
@@ -84,28 +84,27 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
         mse_2 = np.sum((moment_2 - ref_moment_2)**2 / ref_moment_2**2)
         return {'moment_1': moment_1, 'moment_2': moment_2, 'mse_1': mse_1, 'mse_2': mse_2}
 
-
-    model = ComponentwiseFlow(d=d, num_bins=10, range_min=-5, range_max=5, boundary_slopes='unconstrained')
+    model = ComponentwiseFlow(d=d, num_bins=10, range_min=-5, range_max=5, boundary_slopes='identity')
 
     print("MF")
     key, subkey = jax.random.split(key)
-    mfvi_samples_unc, mfvi_val_samples, mfvi_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=1, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=-1, weighted=False, rotate_first_iter=False)
-    all_results['mfvi'] = process_raw_samples(mfvi_samples_unc[0])
+    mfvi_samples_unc, mfvi_val_samples, mfvi_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=1, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=-1, weighted=False)
+    all_results['mfvi'] = process_raw_samples(mfvi_samples_unc[0], scale, shift)
 
     print("iterative random projection")
     key, subkey = jax.random.split(key)
-    rp_samples_unc, rp_val_samples, rp_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=0, rank=0, weighted=False, rotate_first_iter=True)
+    rp_samples_unc, rp_val_samples, rp_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=0, rank=0, weighted=False)
     for j in range(niter):
-        all_results[f'rp_iter{j}'] = process_raw_samples(rp_samples_unc[j])
+        all_results[f'rp_iter{j}'] = process_raw_samples(rp_samples_unc[j], scale, shift)
 
     print("iterative AS projection")
-    if d <= 3:
+    if d <= 2:
         rank = 0
     else:
-        rank = 1
-    as_samples_unc, as_val_samples, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=False, rotate_first_iter=True)
+        rank = d // 2
+    as_samples_unc, as_val_samples, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=False)
     for j in range(niter):
-        all_results[f'as_iter{j}'] = process_raw_samples(as_samples_unc[j])
+        all_results[f'as_iter{j}'] = process_raw_samples(as_samples_unc[j], scale, shift)
 
     print("Fit RealNVP")
     model_nvp = RealNVP(dim=d, n_layers=n_layers, hidden_dims=[d])
@@ -118,7 +117,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
 
     params_nvp, losses_nvp = train(loss_nvp, params_nvp, learning_rate=learning_rate, max_iter=max_iter)
     transformed_samples_nvp, _ = model_nvp.apply(params_nvp, base_samples, method=model_nvp.forward)
-    all_results['realnvp'] = process_raw_samples(transformed_samples_nvp)
+    all_results['realnvp'] = process_raw_samples(transformed_samples_nvp, scale, shift)
     print(pd.DataFrame(all_results))
 
     if savepath is not None:
@@ -130,7 +129,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--posterior_name', type=str, default='hmm', choices=['arK', 'gp_regr', 'hmm', 'nes_logit', 'normal_mixture', 'eight_schools', 'garch', 'mesquite'])
+    argparser.add_argument('--posterior_name', type=str, default='hmm', choices=['arK', 'gp_regr', 'hmm', 'nes_logit', 'normal_mixture', 'eight_schools', 'garch', 'mesquite', "radon", "irt_2pl", "glmm_poisson", "kidscore_interaction", "sesame", "wells", "M0"])
     argparser.add_argument('--seed', type=int, default=0)
     argparser.add_argument('--max_iter', type=int, default=500)
     argparser.add_argument('--lr', type=float, default=1e-2)
