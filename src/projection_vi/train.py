@@ -79,7 +79,6 @@ def iterative_projection_mfvi(model, logp_fn, niter, key, base_samples, learning
 
 def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, learning_rate=1e-3, max_iter=1000, rank0=0, rank=0, weighted=False):
     d = model.d
-    n_train = base_samples.shape[0]
     
     @jax.jit
     def loss_fn(params, base_samples, rot):
@@ -129,26 +128,21 @@ def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, lea
         key, subkey = jax.random.split(key)
         rot = sample_ortho(d, subkey)
     else:
-        scores_p = jax.vmap(jax.grad(logp_fn))(base_samples)
-        scores_q = -base_samples
+        scores_p = jax.vmap(jax.grad(logp_fn))(val_samples)
+        scores_q = -val_samples
         relative_scores = scores_p - scores_q
         if not weighted:
             # expectation is taken over q
-            H = relative_scores.T @ relative_scores / base_samples.shape[0]
+            H = relative_scores.T @ relative_scores / val_samples.shape[0]
         else:
             # expectation is taken over p, using importance weighting
-            log_weights = jax.vmap(logp_fn)(base_samples) - logq
+            log_weights = jax.vmap(logp_fn)(val_samples) - val_logq
             log_weights = log_weights - logsumexp(log_weights)
             weights = jnp.exp(log_weights)
             H = (weights[:, None] * relative_scores).T @ relative_scores
         eigvals, eigvecs = jnp.linalg.eigh(H)
         eigvecs = eigvecs[:, ::-1]
-        rot = eigvecs.T # first iteration, use all eigenvectors; no randomness
-        # U_r = eigvecs[:, :rank]
-        # key, subkey = jax.random.split(key)
-        # rot = complete_orthonormal_basis(U_r, subkey)
-        # rot = rot.T
-
+        rot = eigvecs.T 
 
     val_KL_hist = []
     val_ess_hist = []
@@ -162,8 +156,7 @@ def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, lea
         ess = jnp.exp(2 * logsumexp(log_weights) - logsumexp(2 * log_weights))
         
         # update val samples and metrics
-        val_samples, val_ld = model.apply(optim_params, val_samples, rot=rot, method=model.forward)
-        val_samples_hist.append(val_samples)
+        transformed_val_samples, val_ld = model.apply(optim_params, val_samples, rot=rot, method=model.forward)
         val_logq = val_logq - val_ld
         val_log_weights = jax.vmap(logp_fn)(val_samples) - val_logq
         val_KL_hist.append(-jnp.mean(val_log_weights))
@@ -175,9 +168,9 @@ def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, lea
             rot = sample_ortho(d, subkey)
         else:
             if weighted:
-                eigvecs, eigvals, scores_q = score_active_subspace(base_samples, transformed_samples, scores_q, optim_params, rot, log_weights=log_weights)
+                eigvecs, eigvals, scores_q = score_active_subspace(val_samples, transformed_val_samples, scores_q, optim_params, rot, log_weights=val_log_weights)
             else:
-                eigvecs, eigvals, scores_q = score_active_subspace(base_samples, transformed_samples, scores_q, optim_params, rot, log_weights=None)
+                eigvecs, eigvals, scores_q = score_active_subspace(val_samples, transformed_val_samples, scores_q, optim_params, rot, log_weights=None)
             print('eigenvalues', eigvals)
             U_r = eigvecs[:, :rank]
             key, subkey = jax.random.split(key)
@@ -186,7 +179,8 @@ def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, lea
 
         # update base samples
         base_samples = transformed_samples
+        val_samples = transformed_val_samples
 
         print("Iteration:", k, 'KL:', -log_weights.mean(), 'ESS:', ess)
     validation_metrics = {'KL': val_KL_hist, 'ESS': val_ess_hist}
-    return jnp.stack(samples_hist), jnp.stack(val_samples_hist), validation_metrics
+    return jnp.stack(samples_hist), validation_metrics
