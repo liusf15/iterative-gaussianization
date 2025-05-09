@@ -27,7 +27,7 @@ def Laplace_approximation(logp_fn, d):
         laplace_scale = jnp.sqrt(jnp.maximum(jnp.diag(laplace_cov), 1))
         return laplace_mean, laplace_scale
 
-def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter=5, learning_rate=1e-3, max_iter=1000,n_layers=8, savepath=None):
+def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter=5, learning_rate=1e-3, max_iter=1000,n_layers=8, savepath=None, weight_score=False):
     # set up target distribution
     data_file = f"stan/{posterior_name}.json"
     target = getattr(Targets, posterior_name)(data_file)
@@ -83,7 +83,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
         rank = 0
     else:
         rank = d // 2
-    as_samples_unc, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=False)
+    as_samples_unc, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=weight_score)
     for j in range(niter):
         all_results[f'as_iter{j}'] = process_raw_samples(as_samples_unc[j], scale, shift)
 
@@ -97,6 +97,12 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
         return model_nvp.apply(params_nvp, base_samples, logp_fn_shifted, method=model_nvp.reverse_kl)
 
     params_nvp, losses_nvp = train(loss_nvp, params_nvp, learning_rate=learning_rate, max_iter=max_iter)
+    if jnp.isnan(jnp.array(losses_nvp)).any():
+        print('NaN loss, reducing learning rate to', learning_rate/10)
+        key, subkey = jax.random.split(key)
+        params_nvp = model_nvp.init(subkey, jnp.zeros((1, d)))
+        params_nvp, losses_nvp = train(loss_nvp, params_nvp, learning_rate=learning_rate/10, max_iter=max_iter)
+
     transformed_samples_nvp, _ = model_nvp.apply(params_nvp, base_samples, method=model_nvp.forward)
     all_results['realnvp'] = process_raw_samples(transformed_samples_nvp, scale, shift)
     print(pd.DataFrame(all_results).loc['mse_1'])
@@ -104,7 +110,10 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
 
     if savepath is not None:
         os.makedirs(savepath, exist_ok=True)
-        filename = os.path.join(savepath, f'{posterior_name}_goodinit_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_layer_{n_layers}_{seed}.pkl')
+        if not weight_score:
+            filename = os.path.join(savepath, f'{posterior_name}_goodinit_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_layer_{n_layers}_{seed}.pkl')
+        else:
+            filename = os.path.join(savepath, f'{posterior_name}_goodinit_weighted_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_layer_{n_layers}_{seed}.pkl')
         with open(filename, 'wb') as f:
             pickle.dump(all_results, f)
         print('Results saved to', filename)
@@ -134,5 +143,6 @@ if __name__ == '__main__':
                    learning_rate=args.lr,
                    max_iter=args.max_iter, 
                    n_layers=args.n_layers,
-                   savepath=savepath)
+                   savepath=savepath,
+                   weight_score=False)
     
