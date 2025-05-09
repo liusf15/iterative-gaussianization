@@ -69,12 +69,12 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
 
     print("MF")
     key, subkey = jax.random.split(key)
-    mfvi_samples_unc, mfvi_val_samples, mfvi_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=1, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=-1, weighted=False)
+    mfvi_samples_unc, mfvi_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=1, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=-1, weighted=False)
     all_results['mfvi'] = process_raw_samples(mfvi_samples_unc[0], scale, shift)
 
     print("iterative random projection")
     key, subkey = jax.random.split(key)
-    rp_samples_unc, rp_val_samples, rp_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=0, rank=0, weighted=False)
+    rp_samples_unc, rp_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=0, rank=0, weighted=False)
     for j in range(niter):
         all_results[f'rp_iter{j}'] = process_raw_samples(rp_samples_unc[j], scale, shift)
 
@@ -83,7 +83,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
         rank = 0
     else:
         rank = d // 2
-    as_samples_unc, as_val_samples, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=False)
+    as_samples_unc, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=False)
     for j in range(niter):
         all_results[f'as_iter{j}'] = process_raw_samples(as_samples_unc[j], scale, shift)
 
@@ -99,7 +99,8 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
     params_nvp, losses_nvp = train(loss_nvp, params_nvp, learning_rate=learning_rate, max_iter=max_iter)
     transformed_samples_nvp, _ = model_nvp.apply(params_nvp, base_samples, method=model_nvp.forward)
     all_results['realnvp'] = process_raw_samples(transformed_samples_nvp, scale, shift)
-    print(pd.DataFrame(all_results))
+    print(pd.DataFrame(all_results).loc['mse_1'])
+    print(pd.DataFrame(all_results).loc['mse_2'])
 
     if savepath is not None:
         os.makedirs(savepath, exist_ok=True)
@@ -110,7 +111,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--posterior_name', type=str, default='hmm', choices=['arK', 'arma', 'gp_regr', 'hmm', 'nes_logit', 'normal_mixture', 'eight_schools', 'garch', 'mesquite', "radon", "irt_2pl", "glmm_poisson", "kidscore_interaction", "sesame", "wells", "M0"])
+    argparser.add_argument('--posterior_name', type=str, default='hmm')
     argparser.add_argument('--seed', type=int, default=0)
     argparser.add_argument('--max_iter', type=int, default=500)
     argparser.add_argument('--lr', type=float, default=1e-2)
