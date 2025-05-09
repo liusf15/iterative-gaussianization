@@ -171,8 +171,11 @@ def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, lea
                 eigvecs, eigvals, scores_q = score_active_subspace(val_samples, transformed_val_samples, scores_q, optim_params, rot, log_weights=val_log_weights)
             else:
                 eigvecs, eigvals, scores_q = score_active_subspace(val_samples, transformed_val_samples, scores_q, optim_params, rot, log_weights=None)
-            print('eigenvalues', eigvals)
-            U_r = eigvecs[:, :rank]
+            eigvals = jnp.clip(eigvals, a_min=0)
+            var_explained = jnp.cumsum(eigvals) / jnp.sum(eigvals)
+            idx = jnp.where(var_explained > 0.95)[0][0]
+            print("First", idx+1, "components explain", round(var_explained[idx], 3), "of variance")
+            U_r = eigvecs[:, :min(idx + 1, rank)]
             key, subkey = jax.random.split(key)
             U = complete_orthonormal_basis(U_r, subkey)
             rot = U.T
