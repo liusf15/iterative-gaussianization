@@ -11,23 +11,20 @@ from projection_vi import ComponentwiseFlow, RealNVP
 from projection_vi.train import train, iterative_AS_mfvi
 import experiments.targets as Targets
 
-def Laplace_approximation(logp_fn, d):
-    def neg_logp_fn(x):
-        return -logp_fn(x)
-    bfgs_res = minimize(neg_logp_fn, jnp.zeros(d,), method='BFGS')
-    laplace_mean = bfgs_res.x
-    laplace_cov = bfgs_res.hess_inv
-    laplace_scale = jnp.sqrt(jnp.maximum(jnp.diag(laplace_cov), 1))
-    if (not jnp.isnan(laplace_mean).any()) and (not jnp.isinf(laplace_scale).any()):
-        return laplace_mean, laplace_scale
-    else:
-        x, losses = train(neg_logp_fn, jnp.zeros(d,), learning_rate=1e-2, max_iter=2000)
-        laplace_mean = x
-        laplace_cov = jnp.linalg.inv(jax.hessian(neg_logp_fn)(x))
-        laplace_scale = jnp.sqrt(jnp.maximum(jnp.diag(laplace_cov), 1))
-        return laplace_mean, laplace_scale
 
-def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter=5, learning_rate=1e-3, max_iter=1000, n_layers=8, savepath=None, boundary_slopes='identity', num_bins=10, range_max=5):
+def run_experiment(posterior_name='arK', 
+                   seed=0, 
+                   n_train=2000, 
+                   n_val=1000, niter=3, 
+                   learning_rate=1e-2, 
+                   max_iter=500, 
+                   n_layers=8, 
+                   savepath=None, 
+                   boundary_slopes='unconstrained', 
+                   num_bins=10, 
+                   range_max=5.0,
+                   IS_score=False):
+    
     # set up target distribution
     data_file = f"stan/{posterior_name}.json"
     target = getattr(Targets, posterior_name)(data_file)
@@ -61,11 +58,15 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
         samples_constrain = target.param_constrain(raw_samples * scale + shift)
         moment_1 = np.mean(samples_constrain, axis=0)
         moment_2 = np.mean(samples_constrain**2, axis=0)
-        mse_1 = np.mean((moment_1 - ref_moment_1)**2 / ref_moment_1**2)
-        mse_2 = np.mean((moment_2 - ref_moment_2)**2 / ref_moment_2**2)
+        mse_1 = np.mean((moment_1 - ref_moment_1)**2 / jnp.clip(ref_moment_1**2, min=0.1))
+        mse_2 = np.mean((moment_2 - ref_moment_2)**2 / jnp.clip(ref_moment_2**2, min=0.1))
         return {'moment_1': moment_1, 'moment_2': moment_2, 'mse_1': mse_1, 'mse_2': mse_2}
 
-    model = ComponentwiseFlow(d=d, num_bins=num_bins, range_min=-range_max, range_max=range_max, boundary_slopes=boundary_slopes)
+    model = ComponentwiseFlow(d=d, 
+                              num_bins=num_bins, 
+                              range_min=-range_max, 
+                              range_max=range_max, 
+                              boundary_slopes=boundary_slopes)
 
     print("MF")
     key, subkey = jax.random.split(key)
@@ -83,7 +84,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
         rank = 0
     else:
         rank = d // 2
-    as_samples_unc, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=False)
+    as_samples_unc, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=IS_score)
     for j in range(niter):
         all_results[f'as_iter{j}'] = process_raw_samples(as_samples_unc[j], scale, shift)
 
@@ -110,7 +111,10 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
 
     if savepath is not None:
         os.makedirs(savepath, exist_ok=True)
-        filename = os.path.join(savepath, f'{posterior_name}_goodinit_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_bin_{num_bins}_range_{range_max}_layer_{n_layers}_{seed}.pkl')
+        if not IS_score:
+            filename = os.path.join(savepath, f'{posterior_name}_goodinit_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_bin_{num_bins}_range_{range_max}_layer_{n_layers}_{seed}.pkl')
+        else:
+            filename = os.path.join(savepath, f'{posterior_name}_IS_goodinit_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_bin_{num_bins}_range_{range_max}_layer_{n_layers}_{seed}.pkl')
         with open(filename, 'wb') as f:
             pickle.dump(all_results, f)
         print('Results saved to', filename)
@@ -121,14 +125,14 @@ if __name__ == '__main__':
     argparser.add_argument('--seed', type=int, default=0)
     argparser.add_argument('--max_iter', type=int, default=500)
     argparser.add_argument('--lr', type=float, default=1e-2)
-    argparser.add_argument('--n_train', type=int, default=3000)
+    argparser.add_argument('--n_train', type=int, default=2000)
     argparser.add_argument('--n_val', type=int, default=1000)
     argparser.add_argument('--niter', type=int, default=3)
-    argparser.add_argument('--boundary_slopes', type=str, default='identity')
+    argparser.add_argument('--boundary_slopes', type=str, default='unconstrained')
     argparser.add_argument('--num_bins', type=int, default=10)
     argparser.add_argument('--range_max', type=float, default=5)
     argparser.add_argument('--n_layers', type=int, default=8)
-    argparser.add_argument('--init', type=str, default='MFG', choices=['MFG', 'Laplace'])
+    argparser.add_argument('--IS_score', action='store_true', default=False)
     argparser.add_argument('--savepath', type=str, default='/mnt/home/sliu1/ceph/projection_vi')
     argparser.add_argument('--date', type=str, default='20250415')
 
@@ -146,5 +150,6 @@ if __name__ == '__main__':
                    savepath=savepath,
                    boundary_slopes=args.boundary_slopes,
                    num_bins=args.num_bins,
-                   range_max=args.range_max)
+                   range_max=args.range_max,
+                   IS_score=args.IS_score)
     
