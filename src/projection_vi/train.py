@@ -158,7 +158,7 @@ def iterative_AS_mfvi(model, logp_fn, niter, key, base_samples, val_samples, lea
         # update val samples and metrics
         transformed_val_samples, val_ld = model.apply(optim_params, val_samples, rot=rot, method=model.forward)
         val_logq = val_logq - val_ld
-        val_log_weights = jax.vmap(logp_fn)(val_samples) - val_logq
+        val_log_weights = jax.vmap(logp_fn)(transformed_val_samples) - val_logq
         val_KL_hist.append(-jnp.mean(val_log_weights))
         val_ess_hist.append(jnp.exp(2 * logsumexp(val_log_weights) - logsumexp(2 * val_log_weights)))
 
