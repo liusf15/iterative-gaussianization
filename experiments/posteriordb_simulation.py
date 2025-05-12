@@ -27,7 +27,7 @@ def Laplace_approximation(logp_fn, d):
         laplace_scale = jnp.sqrt(jnp.maximum(jnp.diag(laplace_cov), 1))
         return laplace_mean, laplace_scale
 
-def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter=5, learning_rate=1e-3, max_iter=1000,n_layers=8, savepath=None, boundary_slopes='identity', num_bins=10, range_max=5):
+def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter=5, learning_rate=1e-3, max_iter=1000, n_layers=8, savepath=None, boundary_slopes='identity', num_bins=10, range_max=5):
     # set up target distribution
     data_file = f"stan/{posterior_name}.json"
     target = getattr(Targets, posterior_name)(data_file)
@@ -144,7 +144,6 @@ if __name__ == '__main__':
                    max_iter=args.max_iter, 
                    n_layers=args.n_layers,
                    savepath=savepath,
-                   weight_score=False,
                    boundary_slopes=args.boundary_slopes,
                    num_bins=args.num_bins,
                    range_max=args.range_max)
