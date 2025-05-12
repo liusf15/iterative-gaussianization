@@ -27,7 +27,7 @@ def Laplace_approximation(logp_fn, d):
         laplace_scale = jnp.sqrt(jnp.maximum(jnp.diag(laplace_cov), 1))
         return laplace_mean, laplace_scale
 
-def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter=5, learning_rate=1e-3, max_iter=1000,n_layers=8, savepath=None, weight_score=False, boundary_slopes='identity'):
+def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter=5, learning_rate=1e-3, max_iter=1000,n_layers=8, savepath=None, boundary_slopes='identity', num_bins=10, range_max=5):
     # set up target distribution
     data_file = f"stan/{posterior_name}.json"
     target = getattr(Targets, posterior_name)(data_file)
@@ -65,7 +65,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
         mse_2 = np.mean((moment_2 - ref_moment_2)**2 / ref_moment_2**2)
         return {'moment_1': moment_1, 'moment_2': moment_2, 'mse_1': mse_1, 'mse_2': mse_2}
 
-    model = ComponentwiseFlow(d=d, num_bins=10, range_min=-5, range_max=5, boundary_slopes=boundary_slopes)
+    model = ComponentwiseFlow(d=d, num_bins=num_bins, range_min=-range_max, range_max=range_max, boundary_slopes=boundary_slopes)
 
     print("MF")
     key, subkey = jax.random.split(key)
@@ -83,7 +83,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
         rank = 0
     else:
         rank = d // 2
-    as_samples_unc, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=weight_score)
+    as_samples_unc, as_logs = iterative_AS_mfvi(model, logp_fn_shifted, niter=niter, key=subkey, base_samples=base_samples, val_samples=val_samples, learning_rate=learning_rate, max_iter=max_iter, rank0=d, rank=rank, weighted=False)
     for j in range(niter):
         all_results[f'as_iter{j}'] = process_raw_samples(as_samples_unc[j], scale, shift)
 
@@ -110,10 +110,7 @@ def run_experiment(posterior_name='arK', seed=0, n_train=1000, n_val=1000, niter
 
     if savepath is not None:
         os.makedirs(savepath, exist_ok=True)
-        if not weight_score:
-            filename = os.path.join(savepath, f'{posterior_name}_goodinit_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_layer_{n_layers}_{seed}.pkl')
-        else:
-            filename = os.path.join(savepath, f'{posterior_name}_goodinit_weighted_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_layer_{n_layers}_{seed}.pkl')
+        filename = os.path.join(savepath, f'{posterior_name}_goodinit_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_bin_{num_bins}_range_{range_max}_layer_{n_layers}_{seed}.pkl')
         with open(filename, 'wb') as f:
             pickle.dump(all_results, f)
         print('Results saved to', filename)
@@ -128,6 +125,8 @@ if __name__ == '__main__':
     argparser.add_argument('--n_val', type=int, default=1000)
     argparser.add_argument('--niter', type=int, default=3)
     argparser.add_argument('--boundary_slopes', type=str, default='identity')
+    argparser.add_argument('--num_bins', type=int, default=10)
+    argparser.add_argument('--range_max', type=float, default=5)
     argparser.add_argument('--n_layers', type=int, default=8)
     argparser.add_argument('--init', type=str, default='MFG', choices=['MFG', 'Laplace'])
     argparser.add_argument('--savepath', type=str, default='/mnt/home/sliu1/ceph/projection_vi')
@@ -146,5 +145,7 @@ if __name__ == '__main__':
                    n_layers=args.n_layers,
                    savepath=savepath,
                    weight_score=False,
-                   boundary_slopes=args.boundary_slopes)
+                   boundary_slopes=args.boundary_slopes,
+                   num_bins=args.num_bins,
+                   range_max=args.range_max)
     
