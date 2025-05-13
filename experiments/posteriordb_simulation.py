@@ -5,7 +5,6 @@ import os
 import argparse
 import pickle
 import pandas as pd
-from jax.scipy.optimize import minimize
 
 from projection_vi import ComponentwiseFlow, RealNVP
 from projection_vi.train import train, iterative_AS_mfvi
