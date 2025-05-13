@@ -24,7 +24,7 @@ def run_experiment(posterior_name='arK',
                    num_bins=10, 
                    range_max=5.0,
                    IS_score=False,
-                   initialization="Laplace"):
+                   init="laplace"):
     
     # set up target distribution
     data_file = f"stan/{posterior_name}.json"
@@ -39,12 +39,7 @@ def run_experiment(posterior_name='arK',
     ref_moment_2 = reference_moments['moments_2'].mean(0)
 
     # load initialization
-    if initialization == "Laplace":
-        initialization = pd.read_csv(f'experiments/results/{posterior_name}_laplace_initialization.csv', index_col=0)
-    elif initialization == "mfg":
-        initialization = pd.read_csv(f'experiments/results/{posterior_name}_mfg_initialization.csv', index_col=0)
-    else:
-        raise NotImplementedError
+    initialization = pd.read_csv(f'experiments/results/{posterior_name}_{init}_initialization.csv', index_col=0)
     scale = initialization.loc['scale'].values
     shift = initialization.loc['mean'].values  
 
@@ -118,9 +113,9 @@ def run_experiment(posterior_name='arK',
     if savepath is not None:
         os.makedirs(savepath, exist_ok=True)
         if not IS_score:
-            filename = os.path.join(savepath, f'{posterior_name}_init_{initialization}_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_bin_{num_bins}_range_{range_max}_layer_{n_layers}_{seed}.pkl')
+            filename = os.path.join(savepath, f'{posterior_name}_init_{init}_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_bin_{num_bins}_range_{range_max}_layer_{n_layers}_{seed}.pkl')
         else:
-            filename = os.path.join(savepath, f'{posterior_name}_IS_init_{initialization}_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_bin_{num_bins}_range_{range_max}_layer_{n_layers}_{seed}.pkl')
+            filename = os.path.join(savepath, f'{posterior_name}_IS_init_{init}_train_{n_train}_val_{n_val}_iter_{niter}_lr_{learning_rate}_maxiter_{max_iter}_boundary_{boundary_slopes}_bin_{num_bins}_range_{range_max}_layer_{n_layers}_{seed}.pkl')
         with open(filename, 'wb') as f:
             pickle.dump(all_results, f)
         print('Results saved to', filename)
@@ -139,7 +134,7 @@ if __name__ == '__main__':
     argparser.add_argument('--range_max', type=float, default=5)
     argparser.add_argument('--n_layers', type=int, default=8)
     argparser.add_argument('--IS_score', action='store_true', default=False)
-    argparser.add_argument('--initialization', type=str, default='Laplace')
+    argparser.add_argument('--init', type=str, default='laplace', choices=['laplace', 'mfg'])
     argparser.add_argument('--savepath', type=str, default='/mnt/home/sliu1/ceph/projection_vi')
     argparser.add_argument('--date', type=str, default='20250415')
 
@@ -159,5 +154,5 @@ if __name__ == '__main__':
                    num_bins=args.num_bins,
                    range_max=args.range_max,
                    IS_score=args.IS_score,
-                   initialization=args.initialization)
+                   init=args.init)
     
