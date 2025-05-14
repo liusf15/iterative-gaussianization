@@ -133,7 +133,7 @@ if __name__ == '__main__':
     argparser.add_argument('--n_layers', type=int, default=8)
     argparser.add_argument('--IS_score', action='store_true', default=False)
     argparser.add_argument('--savepath', type=str, default='.')
-    argparser.add_argument('--date', type=str, default='20250415')
+    argparser.add_argument('--date', type=str, default='')
 
     args = argparser.parse_args()
     savepath = os.path.join(args.savepath, args.date)
