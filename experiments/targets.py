@@ -665,3 +665,52 @@ class BLR:
     
     def param_unc_names(self):
         return ['beta']
+
+class german:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.y = jnp.array(self.data['y'])
+        self.X = jnp.array(self.data['X'], dtype=jnp.float32)
+        self.p = self.X.shape[1]
+        self.d = 2 * self.p + 1
+
+        def _numpyro_model():
+            tau_unc = numpyro.sample("tau_unc", ImproperUniform())
+            tau = jnp.exp(tau_unc)
+            numpyro.factor("tau", dist.Gamma(0.5, 0.5).log_prob(tau) + tau_unc)
+
+            lbd_unc = numpyro.sample("lbd_unc", ImproperUniform().expand([self.p]))
+            lbd = jnp.exp(lbd_unc)
+            numpyro.factor("lbd", dist.Gamma(0.5, 0.5).expand([self.p]).log_prob(lbd) + lbd_unc.sum())
+
+            beta = numpyro.sample("beta", dist.Normal(0, 1).expand([self.p]))
+            
+            logits = jnp.dot(self.X, tau * (beta * lbd))
+            numpyro.sample("y", dist.Bernoulli(logits=logits), obs=self.y)
+
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.key(0))
+
+    def _log_prob(self, x):
+        params = {
+            "tau_unc": x[0],
+            "lbd_unc": x[1:self.p+1],
+            "beta": x[self.p+1:]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        if x.ndim == 1:
+            return jnp.array([
+                jnp.exp(x[:self.p+1]),
+                x[self.p+1:],
+            ])
+        return jnp.hstack([jnp.exp(x[:, :self.p+1]), x[:, self.p+1:]])
+    
+    def param_unc_names(self):
+        return ['tau_unc', 'lbd_unc', 'beta']
+    
