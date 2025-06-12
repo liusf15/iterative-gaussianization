@@ -124,9 +124,9 @@ class ComponentwiseFlow(nn.Module):
             z = z @ rot
         return z, logdet
 
-    def reverse_kl(self, base_samples, logp_fn, rot=None):
+    def reverse_kl(self, base_samples, logp_fn, rot=None, temperature=1.):
         X, log_det = self.forward(base_samples, rot=rot)
-        logp = jax.vmap(logp_fn)(X)
+        logp = jax.vmap(logp_fn)(X) * temperature + (1 - temperature) * (-.5 * jnp.sum(X**2, axis=-1))
         logp = jnp.where(jnp.abs(logp) < 1e10, logp, jnp.nan)
         return -jnp.nanmean(log_det + logp)
     
