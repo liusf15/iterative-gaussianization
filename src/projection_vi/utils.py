@@ -90,11 +90,3 @@ def compute_ksd(X: jnp.ndarray, score_fn: callable, sigma: float = 1.0) -> jnp.n
     H = term1 + term2 + term3 + laplacian_K
 
     return (jnp.sum(H) - jnp.trace(H)) / (n * (n - 1))
-
-# Example usage (with jit-compiled functions):
-# X = jax.random.normal(jax.random.PRNGKey(0), (128, 2))
-# Y = jax.random.normal(jax.random.PRNGKey(1), (128, 2))
-# sigma = median_bandwidth(np.vstack([np.array(X), np.array(Y)]))  # from earlier
-# mmd2 = compute_mmd(X, Y, sigma, biased=False)
-# def score_fn(x): return -x  # for standard normal
-# ksd2 = compute_ksd(X, score_fn, sigma)
