@@ -124,9 +124,9 @@ class ComponentwiseFlow(nn.Module):
             z = z @ rot
         return z, logdet
 
-    def reverse_kl(self, base_samples, logp_fn, rot=None):
+    def reverse_kl(self, base_samples, logp_fn, rot=None, temperature=1.):
         X, log_det = self.forward(base_samples, rot=rot)
-        logp = jax.vmap(logp_fn)(X)
+        logp = jax.vmap(logp_fn)(X) * temperature + (1 - temperature) * (-.5 * jnp.sum(X**2, axis=-1))
         logp = jnp.where(jnp.abs(logp) < 1e10, logp, jnp.nan)
         return -jnp.nanmean(log_det + logp)
     
@@ -184,18 +184,23 @@ class ConditionerMLP(nn.Module):
     hidden_dims: Sequence[int]
     output_dim: int
     activation: Callable = nn.relu
+    zero_init: bool = False  # Option to use zero initialization
 
     @nn.compact
     def __call__(self, x):
         for h in self.hidden_dims:
-            x = self.activation(nn.Dense(h, 
-                                         kernel_init=nn.initializers.variance_scaling(scale=0.1, mode="fan_in", distribution="normal"))(x))
+            x = self.activation(
+                nn.Dense(
+                    h,
+                    kernel_init=nn.initializers.zeros_init() if self.zero_init else nn.initializers.variance_scaling(scale=0.1, mode="fan_in", distribution="normal")
+                )(x)
+            )
         x = nn.Dense(
             2 * self.output_dim,
-            kernel_init=nn.initializers.variance_scaling(scale=0.01, mode="fan_in", distribution="truncated_normal"),
-            bias_init=nn.initializers.zeros_init())(x)
+            kernel_init=nn.initializers.zeros_init() if self.zero_init else nn.initializers.variance_scaling(scale=0.01, mode="fan_in", distribution="truncated_normal"),
+            bias_init=nn.initializers.zeros_init()
+        )(x)
         return x
-
 
 class RealNVP(nn.Module):
     dim: int
