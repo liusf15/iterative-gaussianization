@@ -181,3 +181,4 @@ scripts/
 .vscode/
 stan/
 *results/
+*old/
