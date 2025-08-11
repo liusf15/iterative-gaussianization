@@ -95,8 +95,8 @@ def apply_householder_transpose(W, x):
     x = jax.lax.fori_loop(0, r, lambda k, x: body(k, x), x)
     return x
 
-def iterative_gaussianization(logp_fn, d, nsample, key, gamma, niter=5, opt_params={'temperature': 1., 'learning_rate': 1e-3, 'max_iter': 1000}):
-    flow = ComponentwiseFlow(d, num_bins=10, range_min=-5., range_max=5., boundary_slopes='unconstrained')
+def iterative_gaussianization(logp_fn, d, nsample, key, gamma, niter=5, opt_params={'temperature': 1., 'learning_rate': 1e-3, 'max_iter': 1000}, flow_params={'num_bins': 10, 'range_min': -5., 'range_max': 5., 'boundary_slopes': 'unconstrained'}):
+    flow = ComponentwiseFlow(d, **flow_params)
     logp_k = logp_fn
     transforms = []
     for i in range(niter):
@@ -114,7 +114,7 @@ def iterative_gaussianization(logp_fn, d, nsample, key, gamma, niter=5, opt_para
 
         transforms.append((W, params))
         print(f"Loss", losses[-1])
-    return transforms
+    return flow, transforms
 
 def iterative_forward_map(flow, transforms, samples):
     logdet = 0.
