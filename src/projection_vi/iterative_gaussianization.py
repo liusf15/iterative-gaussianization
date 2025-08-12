@@ -5,11 +5,11 @@ import jax_tqdm
 from jax.scipy.stats import multivariate_normal as mvn
 from src.projection_vi.flows import ComponentwiseFlow
 
-def MFVIStep(logp_fn, flow, nsample, key, beta_0=.1, learning_rate=1e-3, max_iter=1000):
-    d = flow.d
+def MFVIStep(logp_fn, d, flow, nsample, key, beta_0=.1, learning_rate=1e-3, max_iter=1000):
+
     params = flow.init(jax.random.key(0), jnp.zeros((1, d)))
 
-    base_samples = jax.random.normal(key, shape=(nsample, flow.d))
+    base_samples = jax.random.normal(key, shape=(nsample, d))
 
     T = int(0.8 * max_iter)
 
@@ -128,7 +128,7 @@ def iterative_gaussianization(logp_fn, d, nsample, key, gamma, niter=5, opt_para
         logp_k = RotateTarget(logp_k, W)
 
         key, subkey = jax.random.split(key)
-        params, losses = MFVIStep(logp_k, flow, nsample, subkey, **opt_params)
+        params, losses = MFVIStep(logp_k, d, flow, nsample, subkey, **opt_params)
 
         logp_k = PullbackTarget(logp_k, flow, params)
 
