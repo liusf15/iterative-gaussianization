@@ -3,6 +3,7 @@ import jax
 from numpyro.infer import NUTS, MCMC
 import pickle
 import argparse
+import pandas as pd
 
 import experiments.targets as Targets
 import numpyro
@@ -11,7 +12,7 @@ numpyro.set_host_device_count(20)
 
 print(jax.local_device_count())
 
-def main(posterior_name, num_warmup, num_samples, num_chains):
+def main(posterior_name, num_warmup, num_samples, num_chains, save_samples=False):
     data_file = f"stan/{posterior_name}.json"
     target = getattr(Targets, posterior_name)(data_file)
 
@@ -39,6 +40,11 @@ def main(posterior_name, num_warmup, num_samples, num_chains):
 
     with open(f"experiments/results/{posterior_name}_mcmc_moments.pkl", 'wb') as f:
         pickle.dump({'moments_1': moments_1, 'moments_2': moments_2}, f)
+    
+    if save_samples:
+        samples = samples.reshape(-1, samples.shape[-1])
+        samples = samples[::samples.shape[0] // 2000]
+        pd.DataFrame(samples).to_csv(f'~/ceph/projection_vi/posteriordb_reference/{posterior_name}_mcmc_samples.csv')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -46,5 +52,6 @@ if __name__ == '__main__':
     parser.add_argument('--num_warmup', type=int, default=25_000)
     parser.add_argument('--num_samples', type=int, default=50_000)
     parser.add_argument('--num_chains', type=int, default=20)
+    parser.add_argument('--save_samples', action='store_true')
     args = parser.parse_args()
-    main(args.posterior_name, args.num_warmup, args.num_samples, args.num_chains)
+    main(args.posterior_name, args.num_warmup, args.num_samples, args.num_chains, save_samples=args.save_samples)
