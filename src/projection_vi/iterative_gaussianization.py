@@ -63,7 +63,10 @@ def ScorePCA(logp_fn, d, nsample, key, gamma=0.9):
     eigvals, eigvecs, = jnp.linalg.eigh(H_2)
     eigvals = eigvals[::-1]
     eigvecs = eigvecs[:, ::-1]
-    rank = jnp.where(jnp.cumsum(eigvals) >= jnp.sum(eigvals) * gamma)[0][0] + 1
+    if gamma < 1:
+        rank = jnp.where(jnp.cumsum(eigvals) >= jnp.sum(eigvals) * gamma)[0][0] + 1
+    else:
+        rank = d
     print("rank", rank)
     return eigvecs[:, :rank]
 
