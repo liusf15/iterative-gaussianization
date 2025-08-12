@@ -673,7 +673,12 @@ class german:
         with open(data_file, 'r') as f:
             self.data = json.load(f)
         self.y = jnp.array(self.data['y'])
-        self.X = jnp.array(self.data['X'], dtype=jnp.float32)
+        X_raw = jnp.array(self.data['X'], dtype=jnp.float32)
+        X_min = X_raw.min(axis=0)
+        X_max = X_raw.max(axis=0)
+        self.X = 2 * (X_raw - X_min) / (X_max - X_min) - 1
+        self.X = jnp.hstack([jnp.ones((self.X.shape[0], 1)), self.X])
+
         self.p = self.X.shape[1]
         self.d = 2 * self.p + 1
 
