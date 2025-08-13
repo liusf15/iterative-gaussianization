@@ -180,5 +180,5 @@ python
 scripts/
 .vscode/
 stan/
-*results/
+*/results/
 *old/
