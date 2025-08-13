@@ -638,6 +638,215 @@ class M0:
     def param_unc_names(self):
         return ['omega_unc', 'p_unc']
 
+
+class sesame:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.N = self.data['N']
+        self.encouraged = jnp.array(self.data['encouraged'])
+        self.watched = jnp.array(self.data['watched'])
+        self.d = 3
+        def _numpyro_model():
+            beta = numpyro.sample("beta", ImproperUniform().expand([2]))
+            sigma_unc = numpyro.sample("sigma_unc", ImproperUniform())
+            sigma = jnp.exp(sigma_unc)
+            numpyro.factor("sigma_jac", sigma_unc)
+            numpyro.sample("watched", dist.Normal(beta[0] + beta[1] * self.encouraged, sigma), obs=self.watched)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "beta": x[:2],
+            "sigma_unc": x[2]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        if x.ndim == 1:
+            return jnp.array([
+                x[:2],
+                jnp.exp(x[2]),
+            ])
+        return jnp.hstack([x[:, :2], jnp.exp(x[:, 2:3])])
+    
+    def param_unc_names(self):
+        return ['beta', 'sigma_unc']
+
+class wells:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.N = self.data['N']
+        self.switched = jnp.array(self.data['switched'])
+        self.dist = jnp.array(self.data['dist'])
+        self.arsenic = jnp.array(self.data['arsenic'])
+        self.educ = jnp.array(self.data['educ'])
+        self.dist100 = self.dist / 100
+        self.educ4 = self.educ / 4
+        self.x = jnp.hstack([self.dist100[:, None], self.arsenic[:, None], self.educ4[:, None]]) # (N, 3)
+        self.d = 4
+
+        def _numpyro_model():
+            alpha = numpyro.sample("alpha", ImproperUniform())
+            beta = numpyro.sample("beta", ImproperUniform().expand([3]))
+            numpyro.sample("switched", dist.BernoulliLogits(alpha + self.x @ beta), obs=self.switched)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        params = {
+            "alpha": x[0],
+            "beta": x[1:],
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        return x
+
+    def param_unc_names(self):
+        return ['alpha', 'beta']
+
+class pilots:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.N = self.data['N']
+        self.n_groups = self.data['n_groups']
+        self.n_scenarios = self.data['n_scenarios']
+        self.group_id = jnp.array(self.data['group_id'])
+        self.scenario_id = jnp.array(self.data['scenario_id'])
+        self.y = jnp.array(self.data['y'])
+        self.d = 5 + self.n_groups + self.n_scenarios
+
+        def _numpyro_model():
+            sigma_a_unc = numpyro.sample("sigma_a_unc", ImproperUniform())
+            sigma_a = 100 / (1 + jnp.exp(-sigma_a_unc))
+            numpyro.factor("sigma_a_jac", jnp.log(sigma_a) + jnp.log(1 - sigma_a / 100))
+
+            sigma_b_unc = numpyro.sample("sigma_b_unc", ImproperUniform())
+            sigma_b = 100 / (1 + jnp.exp(-sigma_b_unc))
+            numpyro.factor("sigma_b_jac", jnp.log(sigma_b) + jnp.log(1 - sigma_b / 100))
+
+            sigma_y_unc = numpyro.sample("sigma_y_unc", ImproperUniform())
+            sigma_y = 100 / (1 + jnp.exp(-sigma_y_unc))
+            numpyro.factor("sigma_y_jac", jnp.log(sigma_y) + jnp.log(1 - sigma_y / 100))
+
+
+            mu_a = numpyro.sample("mu_a", dist.Normal(0, 1))
+            a = numpyro.sample("a", dist.Normal(10 * mu_a * jnp.ones(self.n_groups), sigma_a))
+
+            mu_b = numpyro.sample("mu_b", dist.Normal(0, 1))
+            b = numpyro.sample("b", dist.Normal(10 * mu_b * jnp.ones(self.n_scenarios), sigma_b))
+
+            numpyro.sample("y", dist.Normal(a[self.group_id] + b[self.scenario_id], sigma_y), obs=self.y)
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+        
+    def _log_prob(self, x):
+        params = {
+            "a": x[:self.n_groups],
+            "b": x[self.n_groups:self.n_groups + self.n_scenarios],
+            "mu_a": x[self.n_groups + self.n_scenarios],
+            "mu_b": x[self.n_groups + self.n_scenarios + 1],
+            "sigma_a_unc": x[self.n_groups + self.n_scenarios + 2],
+            "sigma_b_unc": x[self.n_groups + self.n_scenarios + 3],
+            "sigma_y_unc": x[self.n_groups + self.n_scenarios + 4]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, x):
+        t = self.n_groups + self.n_scenarios
+        if x.ndim == 1:
+            return jnp.array([
+                x[:t + 2],
+                100 / (1 + jnp.exp(-x[t + 2: t+3])),
+                100 / (1 + jnp.exp(-x[t + 3: t+4])),
+                100 / (1 + jnp.exp(-x[t + 4: ]))
+            ])
+        return jnp.hstack([x[:, :t + 2], 
+                           100 / (1 + jnp.exp(-x[:, t + 2: t + 3])),
+                           100 / (1 + jnp.exp(-x[:, t + 3: t + 4])),
+                           100 / (1 + jnp.exp(-x[:, t + 4:]))])
+    def param_unc_names(self):
+        return ['a', 'b', 'mu_a', 'mu_b', 'sigma_a_unc', 'sigma_b_unc', 'sigma_y_unc']
+
+
+class eight_schools:
+    def __init__(self, data_file):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        
+        # Stan data: J schools, y, sigma
+        self.J = self.data['J']                         # number of schools
+        self.y = jnp.array(self.data['y'])              # treatment effects
+        self.sigma = jnp.array(self.data['sigma'])      # std errors
+        self.d = self.J + 2  # dimension of unconstrained parameters = (mu_unc, tau_unc, theta_unc of length J)
+
+        def _numpyro_model():
+            
+            mu = numpyro.sample("mu", dist.Normal(0, 5))
+
+            tau_unc = numpyro.sample("tau_unc", ImproperUniform())
+            tau = numpyro.deterministic("tau", jnp.exp(tau_unc))
+            numpyro.factor("tau_prior", dist.Normal(0, 10).log_prob(tau) + tau_unc)
+
+            # theta_unc = numpyro.sample("theta_unc", ImproperUniform().expand([self.J]))
+            # theta = numpyro.deterministic("theta", mu + tau * theta_unc)
+            # numpyro.factor("theta_prior", dist.Normal(mu, tau).log_prob(theta).sum() + tau_unc * self.J)
+            theta_unc = numpyro.sample("theta_unc", dist.Normal(0, 1).expand([self.J]))
+            theta = mu + tau * theta_unc
+            
+            ll = dist.Normal(theta, self.sigma).log_prob(self.y).sum()
+            numpyro.factor("obs_ll", ll)
+
+        self.numpyro_model = _numpyro_model
+        # Seed the model for log_prob calculations
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.PRNGKey(0))
+
+    def _log_prob(self, x):
+        J = self.J
+        params = {
+            "tau_unc": x[0],
+            "mu": x[1],
+            "theta_unc": x[2 : 2 + J]
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+    
+    # JIT-compile for speed
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        if X.ndim == 1:
+            tau = jnp.exp(X[0:1])
+            mu = X[1:2]
+            theta_unc = X[2:]
+            theta = mu + tau * theta_unc
+            return jnp.concatenate([mu, tau, theta])
+
+        # If X.ndim == 2, we handle multiple samples
+        tau = jnp.exp(X[:, 0:1])
+        mu = X[:, 1:2]
+        theta_unc = X[:, 2:]
+        # shape (N, J)
+        theta = mu + tau * theta_unc
+        # shape (N, J+2)
+        return jnp.hstack([mu, tau, theta])
+
+    def param_unc_names(self):
+        return ['tau_unc', 'mu', 'theta_unc']
+
 class BLR:
     def __init__(self, X, y, prior_scale=1.):
         self.X = X
