@@ -1,5 +1,6 @@
 import numpy as np
 import jax
+import jax.numpy as jnp
 from numpyro.infer import NUTS, MCMC
 import pickle
 import argparse
@@ -31,9 +32,11 @@ def main(posterior_name, num_warmup, num_samples, num_chains, save_samples=False
         if samples_unc is None:
             samples_unc = sample
         else:
-            samples_unc = np.concatenate([samples_unc, sample], axis=1)
+            samples_unc = jnp.concatenate([samples_unc, sample], axis=1)
 
     samples = target.param_constrain(samples_unc)
+
+    samples = np.array(samples)
     samples = samples.reshape(num_chains, -1, samples.shape[1])
     moments_1 = np.mean(samples, axis=1)
     moments_2 = np.mean(samples**2, axis=1)
