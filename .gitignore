@@ -183,3 +183,4 @@ stan/
 */results/
 *old/
 stan-num-pyro/
+*.sh
