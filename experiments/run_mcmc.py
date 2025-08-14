@@ -45,9 +45,8 @@ def main(posterior_name, num_warmup, num_samples, num_chains, save_samples=False
         pickle.dump({'moments_1': moments_1, 'moments_2': moments_2}, f)
     
     if save_samples:
-        samples = samples.reshape(-1, samples.shape[-1])
-        samples = samples[::samples.shape[0] // 2000]
-        pd.DataFrame(samples).to_csv(f'~/ceph/projection_vi/posteriordb_reference/{posterior_name}_mcmc_samples.csv')
+        samples_unc = samples_unc[::samples_unc.shape[0] // 2000]
+        pd.DataFrame(samples_unc).to_csv(f'~/ceph/projection_vi/posteriordb_reference/{posterior_name}_mcmc_samples_unc.csv')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
