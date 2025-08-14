@@ -10,7 +10,7 @@ from jax.scipy.optimize import minimize
 
 from experiments.targets import BLR
 from projection_vi.iterative_gaussianization import iterative_gaussianization, iterative_forward_map
-from experiments.ksd import kernel_stein_discrepancy_efficient, median_heuristic, mmd
+from projection_vi.utils import median_heuristic, compute_ksd, compute_mmd
 
 def get_reference_samples():
     return pd.read_csv("experiments/logistic/bayesian_logistic_reference_samples_unc.csv", index_col=0).values
@@ -56,14 +56,13 @@ def fit(logp_fn, seed=0, nsample=2000, ntrain=1000, gamma=0.95, random_rotate=Fa
 
     return transformed_samples_list, logdensity_list
 
-
 def evaluate(target, mcmc_samples_unc, flow_samples, log_q):
     bandwidth = median_heuristic(mcmc_samples_unc)
     metrics = {}
-    metrics['ksd_imq'] = kernel_stein_discrepancy_efficient(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='imq')
-    metrics['ksd_rbf'] = kernel_stein_discrepancy_efficient(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='rbf')
-    metrics['mmd_imq'] = mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='imq')
-    metrics['mmd_rbf'] = mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='rbf')
+    metrics['ksd_imq'] = compute_ksd(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='imq')
+    metrics['ksd_rbf'] = compute_ksd(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='rbf')
+    metrics['mmd_imq'] = compute_mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='imq')
+    metrics['mmd_rbf'] = compute_mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='rbf')
 
     log_weights = jax.vmap(target.log_prob)(flow_samples) - log_q
     metrics['ess'] = jnp.exp(2 * logsumexp(log_weights) - logsumexp(2 * log_weights))
@@ -109,17 +108,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=0)
-    # parser.add_argument('--nsample', type=int, default=1000)
-    # parser.add_argument('--ntrain', type=int, default=1000)
-    # parser.add_argument('--gamma', type=float, default=0.9)
     parser.add_argument('--n_layer', type=int, default=20)
-    # parser.add_argument('--beta_0', type=float, default=0.1)
-    # parser.add_argument('--learning_rate', type=float, default=0.1)
-    # parser.add_argument('--num_bins', type=int, default=10)
-    # parser.add_argument('--range_max', type=float, default=7.0)
-    # parser.add_argument('--max_iter', type=int, default=100)
-    # parser.add_argument('--nf_max_iter', type=int, default=50)
-    # parser.add_argument('--hidden_dim', type=int, default=1)
     parser.add_argument('--savepath', type=str, default='experiments/results')
     args = parser.parse_args()
 
