@@ -1,5 +1,7 @@
 import jax
 import jax.numpy as jnp
+from typing import Callable, Optional
+
 from jax.nn import softplus
 inverse_softplus = lambda x: jnp.log(jnp.exp(x) - 1.)
 
@@ -17,76 +19,195 @@ def complete_orthonormal_basis(U_r, key):
 
     return jnp.hstack([U_r, Q])
 
-def median_bandwidth(X: jnp.ndarray) -> float:
+def median_heuristic(x_samples: jnp.ndarray, y_samples: jnp.ndarray = None) -> float:
     """
-    Compute the RBF bandwidth sigma using the median heuristic on samples X.
+    Compute median heuristic for bandwidth selection.
+    If y_samples is None, uses only x_samples for pairwise distances.
+    """
+    if y_samples is None:
+        samples = x_samples
+        n = samples.shape[0]
+        # Compute pairwise distances within x_samples
+        diffs = samples[:, None, :] - samples[None, :, :]  # (n, n, d)
+        distances = jnp.sqrt(jnp.sum(diffs**2, axis=-1))  # (n, n)
+        # Get upper triangular part (excluding diagonal)
+        triu_indices = jnp.triu_indices(n, k=1)
+        pairwise_distances = distances[triu_indices]
+    else:
+        # Compute distances between x_samples and y_samples
+        nx, ny = x_samples.shape[0], y_samples.shape[0]
+        diffs = x_samples[:, None, :] - y_samples[None, :, :]  # (nx, ny, d)
+        distances = jnp.sqrt(jnp.sum(diffs**2, axis=-1))  # (nx, ny)
+        pairwise_distances = distances.flatten()
+    
+    return jnp.median(pairwise_distances)
+
+def compute_ksd(samples: jnp.ndarray,
+                score_fn: Callable[[jnp.ndarray], jnp.ndarray],
+                kernel_type: str = 'rbf',
+                bandwidth: Optional[float] = None,
+                beta: float = -0.5) -> float:
+    n_samples, dim = samples.shape
+    
+    # Compute scores
+    scores = jax.vmap(score_fn)(samples)
+    
+    # Use median heuristic if bandwidth not provided
+    if bandwidth is None:
+        bandwidth = median_heuristic(samples)
+        if bandwidth == 0:
+            bandwidth = 1.0
+    
+    # Compute pairwise differences and distances
+    x_diff = samples[:, None, :] - samples[None, :, :]  # (n, n, d)
+    distances_sq = jnp.sum(x_diff**2, axis=-1)  # (n, n)
+    
+    if kernel_type == 'rbf':
+        # k(x,y) = exp(-||x-y||^2 / (2*h^2))
+        k_xy = jnp.exp(-distances_sq / (2 * bandwidth**2))  # (n, n)
+        
+        # ∇_x k(x,y) = k(x,y) * (y-x) / h^2
+        grad_k = k_xy[:, :, None] * (-x_diff) / (bandwidth**2)  # (n, n, d)
+        
+        # ∇_y k(x,y) = k(x,y) * (x-y) / h^2  
+        grad_k_y = k_xy[:, :, None] * x_diff / (bandwidth**2)  # (n, n, d)
+        
+        # trace(∇_x ∇_y k(x,y)) = k(x,y) * (d/h^2 - ||x-y||^2/h^4)
+        trace_hess = k_xy * (dim / (bandwidth**2) - distances_sq / (bandwidth**4))
+        
+    elif kernel_type == 'imq':
+        # k(x,y) = (h^2 + ||x-y||^2)^β
+        k_base = bandwidth**2 + distances_sq  # (n, n)
+        k_xy = jnp.power(k_base, beta)  # (n, n)
+        
+        # ∇_x k(x,y) = 2β * k(x,y) * (x-y) / (h^2 + ||x-y||^2)
+        grad_k = 2 * beta * k_xy[:, :, None] * x_diff / k_base[:, :, None]  # (n, n, d)
+        grad_k_y = -grad_k  # ∇_y k(x,y) = -∇_x k(x,y)
+        
+        # trace(∇_x ∇_y k(x,y)) for IMQ
+        trace_hess = 2 * beta * k_xy * (dim * (beta - 1) / k_base + 2 * beta * distances_sq / (k_base**2))
+    
+    else:
+        raise ValueError(f"Unknown kernel type: {kernel_type}")
+    
+    # Compute Stein kernel elements
+    # Term 1: score_x^T score_y k(x,y)
+    term1 = jnp.sum(scores[:, None, :] * scores[None, :, :], axis=-1) * k_xy  # (n, n)
+    
+    # Term 2: score_x^T ∇_y k(x,y)
+    term2 = jnp.sum(scores[:, None, :] * grad_k_y, axis=-1)  # (n, n)
+    
+    # Term 3: score_y^T ∇_x k(x,y)
+    term3 = jnp.sum(scores[None, :, :] * grad_k, axis=-1)  # (n, n)
+    
+    # Term 4: trace(∇_x ∇_y k(x,y))
+    term4 = trace_hess  # (n, n)
+    
+    # Sum all terms
+    stein_kernel_matrix = term1 + term2 + term3 + term4
+    
+    # KSD^2 is the average
+    ksd_squared = jnp.mean(stein_kernel_matrix)
+    
+    return jnp.sqrt(jnp.maximum(ksd_squared, 0.0))
+
+def mmd_squared(x_samples: jnp.ndarray, 
+                y_samples: jnp.ndarray,
+                kernel_type: str = 'rbf',
+                bandwidth: Optional[float] = None,
+                **kernel_kwargs) -> float:
+    nx, ny = x_samples.shape[0], y_samples.shape[0]
+    
+    # Use median heuristic for bandwidth if needed
+    if bandwidth is None and kernel_type in ['rbf', 'imq', 'laplace']:
+        bandwidth = median_heuristic(x_samples, y_samples)
+        if bandwidth == 0:
+            bandwidth = 1.0
+    
+    if kernel_type == 'rbf':
+        # Compute pairwise squared distances efficiently
+        def compute_rbf_terms():
+            # ||x_i - x_j||² for all i,j
+            x_sq = jnp.sum(x_samples**2, axis=1, keepdims=True)  # (nx, 1)
+            x_dists_sq = x_sq + x_sq.T - 2 * jnp.dot(x_samples, x_samples.T)  # (nx, nx)
+            k_xx = jnp.exp(-x_dists_sq / (2 * bandwidth**2))
+            
+            # ||y_i - y_j||² for all i,j  
+            y_sq = jnp.sum(y_samples**2, axis=1, keepdims=True)  # (ny, 1)
+            y_dists_sq = y_sq + y_sq.T - 2 * jnp.dot(y_samples, y_samples.T)  # (ny, ny)
+            k_yy = jnp.exp(-y_dists_sq / (2 * bandwidth**2))
+            
+            # ||x_i - y_j||² for all i,j
+            xy_dists_sq = x_sq + y_sq.T - 2 * jnp.dot(x_samples, y_samples.T)  # (nx, ny)
+            k_xy = jnp.exp(-xy_dists_sq / (2 * bandwidth**2))
+            
+            return k_xx, k_yy, k_xy
+        
+        k_xx, k_yy, k_xy = compute_rbf_terms()
+        
+    elif kernel_type == 'imq':
+        beta = kernel_kwargs.get('beta', -0.5)
+        
+        def compute_imq_terms():
+            # Compute squared distances
+            x_sq = jnp.sum(x_samples**2, axis=1, keepdims=True)
+            x_dists_sq = x_sq + x_sq.T - 2 * jnp.dot(x_samples, x_samples.T)
+            k_xx = jnp.power(bandwidth**2 + x_dists_sq, beta)
+            
+            y_sq = jnp.sum(y_samples**2, axis=1, keepdims=True)
+            y_dists_sq = y_sq + y_sq.T - 2 * jnp.dot(y_samples, y_samples.T)
+            k_yy = jnp.power(bandwidth**2 + y_dists_sq, beta)
+            
+            xy_dists_sq = x_sq + y_sq.T - 2 * jnp.dot(x_samples, y_samples.T)
+            k_xy = jnp.power(bandwidth**2 + xy_dists_sq, beta)
+            
+            return k_xx, k_yy, k_xy
+        
+        k_xx, k_yy, k_xy = compute_imq_terms()
+        
+    else:
+        raise NotImplementedError(f"Kernel type '{kernel_type}' not implemented.")
+    
+    # Compute unbiased MMD² estimate
+    k_xx_off_diag = k_xx - jnp.diag(jnp.diag(k_xx))
+    k_yy_off_diag = k_yy - jnp.diag(jnp.diag(k_yy))
+    
+    term1 = jnp.sum(k_xx_off_diag) / (nx * (nx - 1))
+    term2 = jnp.sum(k_yy_off_diag) / (ny * (ny - 1))
+    term3 = jnp.sum(k_xy) / (nx * ny)
+    
+    return term1 + term2 - 2 * term3
+
+def compute_mmd(x_samples: jnp.ndarray, 
+        y_samples: jnp.ndarray,
+        kernel_type: str = 'rbf',
+        bandwidth: Optional[float] = None,
+        **kernel_kwargs) -> float:
+    """
+    Compute Maximum Mean Discrepancy (MMD) between two sets of samples.
     
     Args:
-        X: (n, d) array of samples.
-    
+        x_samples: Samples from first distribution, shape (n_x, dim)
+        y_samples: Samples from second distribution, shape (n_y, dim)
+        kernel_type: Type of kernel ('rbf', 'imq', 'polynomial', 'laplace')
+        bandwidth: Kernel bandwidth (auto-selected if None)
+        **kernel_kwargs: Additional kernel parameters
+        
     Returns:
-        sigma: median of pairwise distances.
+        MMD value (always non-negative)
     """
-    # Pairwise squared distances
-    sq_norms = jnp.sum(X**2, axis=1, keepdims=True)  # (n, 1)
-    D2 = sq_norms + sq_norms.T - 2 * X @ X.T         # (n, n)
-    
-    # Extract upper triangle indices i < j
-    n = X.shape[0]
-    i, j = jnp.triu_indices(n, k=1)
-    
-    # Compute distances and take median
-    dists = jnp.sqrt(jnp.maximum(D2[i, j], 0.0))
-    return jnp.median(dists)
+    mmd_sq = mmd_squared(x_samples, y_samples, kernel_type, bandwidth, **kernel_kwargs)
+    return jnp.sqrt(jnp.maximum(mmd_sq, 0.0))  # Ensure non-negative
 
-def rbf_kernel(X: jnp.ndarray, Y: jnp.ndarray = None, sigma: float = 1.0) -> jnp.ndarray:
-    """
-    RBF kernel matrix via JAX.
-    """
-    if Y is None:
-        Y = X
-    # pairwise squared distances
-    sq_dists = jnp.sum((X[:, None, :] - Y[None, :, :])**2, axis=-1)
-    return jnp.exp(-sq_dists / (2 * sigma**2))
+def wasserstein_1d(x, y, p=2):
+    x = jnp.sort(x)
+    y = jnp.sort(y)
+    n, m = x.size, y.size
 
-def compute_mmd(X: jnp.ndarray, Y: jnp.ndarray, sigma: float = 1.0, biased: bool = False) -> jnp.ndarray:
-    """
-    Squared MMD between X and Y using RBF kernel.
-    """
-    Kxx = rbf_kernel(X, X, sigma)
-    Kyy = rbf_kernel(Y, Y, sigma)
-    Kxy = rbf_kernel(X, Y, sigma)
+    k = max(n, m)
+    qs = (jnp.arange(k) + 0.5) / k
 
-    if biased:
-        return jnp.mean(Kxx) + jnp.mean(Kyy) - 2 * jnp.mean(Kxy)
-    else:
-        n = X.shape[0]
-        m = Y.shape[0]
-        sum_xx = (jnp.sum(Kxx) - jnp.trace(Kxx)) / (n * (n - 1))
-        sum_yy = (jnp.sum(Kyy) - jnp.trace(Kyy)) / (m * (m - 1))
-        sum_xy = jnp.mean(Kxy)
-        return sum_xx + sum_yy - 2 * sum_xy
+    xq = jnp.quantile(x, qs, method="linear")
+    yq = jnp.quantile(y, qs, method="linear")
+    return (jnp.mean(jnp.abs(xq - yq) ** p)) ** (1.0 / p)
 
-def compute_ksd(X: jnp.ndarray, score_fn: callable, sigma: float = 1.0) -> jnp.ndarray:
-    """
-    Squared Kernel Stein Discrepancy using the Langevin Stein kernel.
-    score_fn: a function X -> ∇ log p(X)
-    """
-    n, d = X.shape
-    score = score_fn(X)        # (n, d)
-    K = rbf_kernel(X, sigma=sigma)  # (n, n)
-
-    # pairwise differences
-    X_diff = X[:, None, :] - X[None, :, :]  # (n, n, d)
-    # gradient of kernel
-    grad_K = - (X_diff / (sigma**2)) * K[..., None]  # (n, n, d)
-    # laplacian of kernel
-    sq_dist = jnp.sum(X_diff**2, axis=-1)             # (n, n)
-    laplacian_K = ((sq_dist - sigma**2) / (sigma**4)) * K  # (n, n)
-
-    term1 = jnp.einsum('id,jd,ij->ij', score, score, K)
-    term2 = jnp.einsum('id,ijd->ij', score, grad_K)
-    term3 = jnp.einsum('jd,ijd->ij', score, grad_K)
-    H = term1 + term2 + term3 + laplacian_K
-
-    return (jnp.sum(H) - jnp.trace(H)) / (n * (n - 1))
