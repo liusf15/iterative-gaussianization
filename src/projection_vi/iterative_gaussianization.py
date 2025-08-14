@@ -6,10 +6,11 @@ from jax.scipy.stats import multivariate_normal as mvn
 from src.projection_vi.flows import ComponentwiseFlow
 
 def MFVIStep(logp_fn, d, flow, nsample, key, beta_0=.1, learning_rate=1e-3, max_iter=1000):
+    key, subkey = jax.random.split(key)
+    params = flow.init(subkey, jnp.zeros((1, d)))
 
-    params = flow.init(jax.random.key(0), jnp.zeros((1, d)))
-
-    base_samples = jax.random.normal(key, shape=(nsample, d))
+    key, subkey = jax.random.split(key)
+    base_samples = jax.random.normal(subkey, shape=(nsample, d))
 
     T = int(0.8 * max_iter)
 
