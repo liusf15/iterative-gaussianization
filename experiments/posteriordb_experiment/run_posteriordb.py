@@ -9,7 +9,7 @@ from jax.scipy.special import logsumexp
 
 from projection_vi import ComponentwiseFlow
 import experiments.targets as Targets
-from experiments.ksd import kernel_stein_discrepancy_efficient, median_heuristic, mmd
+from projection_vi.utils import median_heuristic, compute_ksd, compute_mmd
 from projection_vi.iterative_gaussianization import iterative_gaussianization, MFVIStep, iterative_forward_map
 
 def load_reference_moments(posterior_name):
@@ -63,10 +63,10 @@ def fit_MFVI(logp_fn, seed=0, nsample=1000, ntrain=1000, beta_0=0.1, learning_ra
 def evaluate(mcmc_samples_unc, ref_moment_1, ref_moment_2, flow_samples, log_q):
     bandwidth = median_heuristic(mcmc_samples_unc)
     metrics = {}
-    metrics['ksd_imq'] = kernel_stein_discrepancy_efficient(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='imq')
-    metrics['ksd_rbf'] = kernel_stein_discrepancy_efficient(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='rbf')
-    metrics['mmd_imq'] = mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='imq')
-    metrics['mmd_rbf'] = mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='rbf')
+    metrics['ksd_imq'] = compute_ksd(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='imq')
+    metrics['ksd_rbf'] = compute_ksd(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='rbf')
+    metrics['mmd_imq'] = compute_mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='imq')
+    metrics['mmd_rbf'] = compute_mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='rbf')
 
     log_weights = jax.vmap(target.log_prob)(flow_samples) - log_q
     metrics['ess'] = jnp.exp(2 * logsumexp(log_weights) - logsumexp(2 * log_weights))
