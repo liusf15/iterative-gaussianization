@@ -3,8 +3,8 @@ import jax.numpy as jnp
 import optax
 import jax_tqdm
 from jax.scipy.stats import multivariate_normal as mvn
-from src.projection_vi.flows import ComponentwiseFlow
-from src.projection_vi.utils import sample_ortho
+from projection_vi.flows import ComponentwiseFlow
+from projection_vi.utils import sample_ortho
 
 def MFVIStep(logp_fn, d, flow, nsample, key, beta_0=.1, learning_rate=1e-3, max_iter=1000):
     key, subkey = jax.random.split(key)

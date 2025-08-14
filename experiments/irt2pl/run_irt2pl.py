@@ -11,7 +11,7 @@ from jax.scipy.special import logsumexp
 from experiments.targets import irt_2pl
 from projection_vi.flows import NeuralSplineFlow
 from projection_vi.iterative_gaussianization import iterative_gaussianization, iterative_forward_map, MFVIStep
-from experiments.ksd import kernel_stein_discrepancy_efficient, median_heuristic, mmd, wasserstein_1d
+from projection_vi.utils import median_heuristic, compute_ksd, compute_mmd, wasserstein_1d
 
 def load_reference_moments():
     with open ("experiments/results/irt_2pl_mcmc_moments.pkl", "rb") as f:
@@ -73,18 +73,18 @@ def fit_NSF(logp_fn, seed=0, nsample=1000, ntrain=1000, n_layer=4, beta_0=0.1, l
 def evaluate(mcmc_samples_unc, ref_moment_1, ref_moment_2, flow_samples, log_q):
     bandwidth = median_heuristic(mcmc_samples_unc)
     metrics = {}
-    metrics['ksd_imq'] = kernel_stein_discrepancy_efficient(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='imq')
-    metrics['ksd_rbf'] = kernel_stein_discrepancy_efficient(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='rbf')
-    metrics['mmd_imq'] = mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='imq')
-    metrics['mmd_rbf'] = mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='rbf')
+    metrics['ksd_imq'] = compute_ksd(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='imq')
+    metrics['ksd_rbf'] = compute_ksd(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='rbf')
+    metrics['mmd_imq'] = compute_mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='imq')
+    metrics['mmd_rbf'] = compute_mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='rbf')
 
     # sliced version
     eigvecs = jnp.linalg.eigh(jnp.cov(mcmc_samples_unc.T))[1]
     eigvecs = eigvecs[:, ::-1]  
     for r in [0, 1, 2, 3, 4, d-5, d-4, d-3, d-2, d-1]:
         bandwidth_r = median_heuristic(mcmc_samples_unc @ eigvecs[:, r:r+1])
-        metrics[f'mmd_imq_proj_{r}'] = mmd(mcmc_samples_unc @ eigvecs[:, r:r+1], flow_samples @ eigvecs[:, r:r+1], bandwidth=bandwidth_r, kernel_type='imq')
-        metrics[f'mmd_rbf_proj_{r}'] = mmd(mcmc_samples_unc @ eigvecs[:, r:r+1], flow_samples @ eigvecs[:, r:r+1], bandwidth=bandwidth_r, kernel_type='rbf')
+        metrics[f'mmd_imq_proj_{r}'] = compute_mmd(mcmc_samples_unc @ eigvecs[:, r:r+1], flow_samples @ eigvecs[:, r:r+1], bandwidth=bandwidth_r, kernel_type='imq')
+        metrics[f'mmd_rbf_proj_{r}'] = compute_mmd(mcmc_samples_unc @ eigvecs[:, r:r+1], flow_samples @ eigvecs[:, r:r+1], bandwidth=bandwidth_r, kernel_type='rbf')
         metrics[f'W2_proj_{r}'] = wasserstein_1d(mcmc_samples_unc @ eigvecs[:, r:r+1], flow_samples @ eigvecs[:, r:r+1], p=2)
 
     log_weights = jax.vmap(target.log_prob)(flow_samples) - log_q
