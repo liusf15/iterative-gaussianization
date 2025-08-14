@@ -4,6 +4,7 @@ import optax
 import jax_tqdm
 from jax.scipy.stats import multivariate_normal as mvn
 from src.projection_vi.flows import ComponentwiseFlow
+from src.projection_vi.utils import sample_ortho
 
 def MFVIStep(logp_fn, d, flow, nsample, key, beta_0=.1, learning_rate=1e-3, max_iter=1000):
     key, subkey = jax.random.split(key)
@@ -56,6 +57,8 @@ def PullbackTarget(logp_fn, flow, params):
     return logp_pullback
 
 def ScorePCA(logp_fn, d, nsample, key, gamma=0.9):
+    if gamma == 0:
+        return jnp.eye(d)
     base_samples = jax.random.normal(key, shape=(nsample, d))
     scores = jax.vmap(jax.grad(logp_fn))(base_samples) + base_samples
     H = scores.T @ base_samples / nsample
@@ -119,7 +122,7 @@ def apply_householder_transpose(W, x):
     x = jax.lax.fori_loop(0, r, lambda k, x: body(k, x), x)
     return x
 
-def iterative_gaussianization(logp_fn, d, nsample, key, gamma, npca=None, niter=5, opt_params={'beta_0': .1, 'learning_rate': 1e-3, 'max_iter': 1000}, flow_params={'num_bins': 10, 'range_min': -5., 'range_max': 5., 'boundary_slopes': 'unconstrained'}):
+def iterative_gaussianization(logp_fn, d, nsample, key, gamma, npca=None, random_rotate=False, niter=5, opt_params={'beta_0': .1, 'learning_rate': 1e-3, 'max_iter': 1000}, flow_params={'num_bins': 10, 'range_min': -5., 'range_max': 5., 'boundary_slopes': 'unconstrained'}):
     flow = ComponentwiseFlow(d, **flow_params)
     logp_k = logp_fn
     if npca is None:
@@ -128,9 +131,12 @@ def iterative_gaussianization(logp_fn, d, nsample, key, gamma, npca=None, niter=
     for i in range(niter):
         print(f"Iteration {i+1}/{niter}")
         key, subkey = jax.random.split(key)
-        V_r = ScorePCA(logp_k, d, npca, subkey, gamma)
+        if random_rotate:
+            V_r = sample_ortho(d, subkey)
+        else:
+            V_r = ScorePCA(logp_k, d, npca, subkey, gamma)
+        
         W = get_householder_matrix(V_r)
-
         logp_k = RotateTarget(logp_k, W)
 
         key, subkey = jax.random.split(key)
