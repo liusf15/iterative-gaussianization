@@ -12,8 +12,7 @@ from jax.scipy.optimize import minimize
 from experiments.targets import german
 from projection_vi.flows import NeuralSplineFlow
 from projection_vi.iterative_gaussianization import iterative_gaussianization, iterative_forward_map, MFVIStep
-from experiments.ksd import kernel_stein_discrepancy_efficient, median_heuristic, mmd
-
+from projection_vi.utils import median_heuristic, compute_ksd, compute_mmd
 
 def get_reference_samples():
     return pd.read_csv("experiments/sparselogistic/german_reference_samples_unc.csv", index_col=0).values
@@ -72,14 +71,13 @@ def fit_NSF(logp_fn, seed=0, nsample=1000, ntrain=1000, n_layer=4, beta_0=0.1, l
 
     return transformed_samples, log_density
 
-
 def evaluate(target, mcmc_samples_unc, flow_samples, log_q):
     bandwidth = median_heuristic(mcmc_samples_unc)
     metrics = {}
-    metrics['ksd_imq'] = kernel_stein_discrepancy_efficient(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='imq')
-    metrics['ksd_rbf'] = kernel_stein_discrepancy_efficient(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='rbf')
-    metrics['mmd_imq'] = mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='imq')
-    metrics['mmd_rbf'] = mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='rbf')
+    metrics['ksd_imq'] = compute_ksd(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='imq')
+    metrics['ksd_rbf'] = compute_ksd(flow_samples, jax.grad(target.log_prob), bandwidth=bandwidth, kernel_type='rbf')
+    metrics['mmd_imq'] = compute_mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='imq')
+    metrics['mmd_rbf'] = compute_mmd(mcmc_samples_unc, flow_samples, bandwidth=bandwidth, kernel_type='rbf')
 
     log_weights = jax.vmap(target.log_prob)(flow_samples) - log_q
     metrics['ess'] = jnp.exp(2 * logsumexp(log_weights) - logsumexp(2 * log_weights))
