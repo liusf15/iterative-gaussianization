@@ -13,20 +13,20 @@ from projection_vi.utils import median_heuristic, compute_ksd, compute_mmd
 from projection_vi.iterative_gaussianization import iterative_gaussianization, MFVIStep, iterative_forward_map
 
 def load_reference_moments(posterior_name):
-    with open (f"experiments/results/{posterior_name}_mcmc_moments.pkl", "rb") as f:
+    with open (f"experiments/posteriordb_experiment/references/{posterior_name}_mcmc_moments.pkl", "rb") as f:
         reference_moments = pickle.load(f)
     ref_moment_1 = reference_moments['moments_1'].mean(0)
     ref_moment_2 = reference_moments['moments_2'].mean(0)
     return ref_moment_1, ref_moment_2
 
 def load_initialization(posterior_name):
-    initialization = pd.read_csv(f'experiments/results/{posterior_name}_laplace_initialization.csv', index_col=0)
+    initialization = pd.read_csv(f'experiments/posteriordb_experiment/references/{posterior_name}_laplace_initialization.csv', index_col=0)
     scale = initialization.loc['scale'].values
     shift = initialization.loc['mean'].values  
     return shift, scale
 
 def load_reference_samples(posterior_name):
-    filename = f'experiments/posteriordb_experiment/reference_samples/{posterior_name}_mcmc_samples_unc.csv'
+    filename = f'experiments/posteriordb_experiment/references/{posterior_name}_mcmc_samples_unc.csv'
     samples = pd.read_csv(filename, index_col=0).values
     return samples
 
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     argparser.add_argument('--num_bins', type=int, default=10)
     argparser.add_argument('--range_max', type=float, default=7.)
     argparser.add_argument('--beta_0', type=float, default=.5)
-    argparser.add_argument('--savepath', type=str, default='.')
+    argparser.add_argument('--savepath', type=str, default='experiments/results')
     argparser.add_argument('--date', type=str, default='')
 
     args = argparser.parse_args()
