@@ -62,7 +62,7 @@ def ScorePCA(logp_fn, d, nsample, key, gamma=0.9):
     base_samples = jax.random.normal(key, shape=(nsample, d))
     scores = jax.vmap(jax.grad(logp_fn))(base_samples) + base_samples
     H = scores.T @ base_samples / nsample
-    print("trace(H)", jnp.trace(H))
+    # print("trace(H)", jnp.trace(H))
     H_2 = H @ H.T
     eigvals, eigvecs, = jnp.linalg.eigh(H_2)
     eigvals = eigvals[::-1]
