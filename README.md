@@ -2,7 +2,7 @@
 
 ## Installation
 ```
-pip -m install -e .
+pip install -e .
 ```
 
 ## Run experiments
