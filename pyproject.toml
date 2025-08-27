@@ -3,9 +3,9 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "projection_VI"  
+name = "iterative-gaussianization"  
 version = "0.1.0"   
-description = "A Python package for Projection VI" 
+description = "Iterative Gaussianization for Sampling" 
 authors = [{ name = "Sifan Liu", email = "sifan.liu@duke.edu" }]
 readme = "README.md" 
 
@@ -30,4 +30,4 @@ packages = ["projection_vi"]  # Replace with your actual package name
 "" = "src"  # Tells setuptools to look inside src/
 
 [project.urls]
-"Repository" = "https://github.com/liusf15/projection_VI.git"
+"Repository" = "https://github.com/liusf15/iterative-gaussianization.git"

@@ -1,4 +1,4 @@
-# projection_VI
+# iterative-gaussianization
 
 ## Installation
 ```
