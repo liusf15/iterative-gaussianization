@@ -14,20 +14,20 @@ from projection_vi.iterative_gaussianization import iterative_gaussianization, i
 from projection_vi.utils import median_heuristic, compute_ksd, compute_mmd, wasserstein_1d
 
 def load_reference_moments():
-    with open ("experiments/results/irt_2pl_mcmc_moments.pkl", "rb") as f:
+    with open ("experiments/posteriordb_experiment/references/irt_2pl_mcmc_moments.pkl", "rb") as f:
         reference_moments = pickle.load(f)
     ref_moment_1 = reference_moments['moments_1'].mean(0)
     ref_moment_2 = reference_moments['moments_2'].mean(0)
     return ref_moment_1, ref_moment_2
 
 def load_initialization():
-    initialization = pd.read_csv('experiments/results/irt_2pl_laplace_initialization.csv', index_col=0)
+    initialization = pd.read_csv('experiments/posteriordb_experiment/references/irt_2pl_laplace_initialization.csv', index_col=0)
     scale = initialization.loc['scale'].values
     shift = initialization.loc['mean'].values  
     return shift, scale
 
 def load_reference_samples():
-    filename = f'experiments/posteriordb_experiment/reference_samples/irt_2pl_mcmc_samples_unc.csv'
+    filename = f'experiments/posteriordb_experiment/references/irt_2pl_mcmc_samples_unc.csv'
     samples = pd.read_csv(filename, index_col=0).values
     return samples
 
