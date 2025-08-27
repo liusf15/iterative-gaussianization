@@ -150,7 +150,7 @@ if __name__ == "__main__":
     parser.add_argument('--nf_max_iter', type=int, default=50)
     parser.add_argument('--hidden_dim', type=int, default=1)
     parser.add_argument('--min_scale', type=float, default=0.5)
-    parser.add_argument('--savepath', type=str, default='experiments/results')
+    parser.add_argument('--savepath', type=str, default='experiments/results/irt_2pl')
     args = parser.parse_args()
 
     target = irt_2pl("stan/irt_2pl.json")
