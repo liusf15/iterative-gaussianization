@@ -41,12 +41,12 @@ def main(posterior_name, num_warmup, num_samples, num_chains, save_samples=False
     moments_1 = np.mean(samples, axis=1)
     moments_2 = np.mean(samples**2, axis=1)
 
-    with open(f"experiments/results/{posterior_name}_mcmc_moments.pkl", 'wb') as f:
+    with open(f"experiments/posteriordb_experiment/references/{posterior_name}_mcmc_moments.pkl", 'wb') as f:
         pickle.dump({'moments_1': moments_1, 'moments_2': moments_2}, f)
     
     if save_samples:
         samples_unc = samples_unc[::samples_unc.shape[0] // 2000]
-        pd.DataFrame(samples_unc).to_csv(f'~/ceph/projection_vi/posteriordb_reference/{posterior_name}_mcmc_samples_unc.csv')
+        pd.DataFrame(samples_unc).to_csv(f'experiments/posteriordb_experiment/references/{posterior_name}_mcmc_samples_unc.csv')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
