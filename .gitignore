@@ -184,3 +184,4 @@ stan/
 *old/
 stan-num-pyro/
 *.sh
+.DS_Store
