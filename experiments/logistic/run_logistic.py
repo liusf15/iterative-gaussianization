@@ -109,7 +109,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--n_layer', type=int, default=5)
-    parser.add_argument('--savepath', type=str, default='experiments/results')
+    parser.add_argument('--savepath', type=str, default='experiments/results/logistic')
     args = parser.parse_args()
 
     n = 20
