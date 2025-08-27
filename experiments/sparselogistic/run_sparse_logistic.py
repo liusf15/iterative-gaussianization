@@ -144,7 +144,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter', type=int, default=100)
     parser.add_argument('--nf_max_iter', type=int, default=50)
     parser.add_argument('--hidden_dim', type=int, default=1)
-    parser.add_argument('--savepath', type=str, default='experiments/results')
+    parser.add_argument('--savepath', type=str, default='experiments/results/sparse_logistic')
     args = parser.parse_args()
 
     target = german("stan/german.json")
