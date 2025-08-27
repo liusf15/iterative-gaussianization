@@ -26,7 +26,7 @@ def load_initialization(posterior_name):
     return shift, scale
 
 def load_reference_samples(posterior_name):
-    filename = f'~/ceph/projection_vi/posteriordb_reference/{posterior_name}_mcmc_samples_unc.csv'
+    filename = f'experiments/posteriordb_experiment/reference_samples/{posterior_name}_mcmc_samples_unc.csv'
     samples = pd.read_csv(filename, index_col=0).values
     return samples
 
