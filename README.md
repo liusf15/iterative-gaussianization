@@ -1,5 +1,9 @@
 # iterative-gaussianization
 
+![Ring](experiments/plots/gifs/ring_3.gif)
+![GMM](experiments/plots/gifs/gmm_3.gif)
+
+
 ## Installation
 ```
 pip install -e .
