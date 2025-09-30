@@ -1,7 +1,7 @@
 # iterative-gaussianization
 
-![Ring](experiments/plots/gifs/ring_3.gif)
-![GMM](experiments/plots/gifs/gmm_3.gif)
+![Ring](experiments/gifs/ring.gif)
+![GMM](experiments/gifs/gmm.gif)
 
 
 ## Installation
