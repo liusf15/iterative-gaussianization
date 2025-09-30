@@ -1,8 +1,9 @@
 # iterative-gaussianization
 
 ![Ring](experiments/gifs/ring.gif)
-![GMM](experiments/gifs/gmm.gif)
 
+
+Iterative construction of transport maps that push the standard Gaussian forward to a target distribution specified by an unnormalized density. The transformations alternate between rotations and coordinatewise maps. The rotations are chosen via a score-based PCA procedure, while the coordinatewise maps are obtained by solving mean-field variational inference problems.
 
 ## Installation
 ```
