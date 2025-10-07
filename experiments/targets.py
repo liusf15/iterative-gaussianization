@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
-from jax.scipy.special import logsumexp
+from jax.scipy.special import logsumexp, digamma
+from jax.nn import sigmoid
 import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import BernoulliLogits
@@ -748,3 +749,95 @@ class german:
     
     def param_unc_names(self):
         return ['tau_unc', 'lbd_unc', 'beta']
+
+class GLMM:
+    def __init__(self, data_file, family='poisson'):
+        with open(data_file, 'r') as f:
+            self.data = json.load(f)
+        self.y = jnp.array(self.data['y'])
+        self.x = jnp.array(self.data['x'])
+        self.n = self.data['n']
+        self.m = self.data['m']
+        self.d = 3 + self.n
+        self.eta_mle = digamma(self.y + 0.5)
+        self.hess_at_mle = jnp.exp(self.eta_mle)
+
+        if family.lower() == "poisson":
+            self.dist = dist.Poisson
+            self.link = jnp.exp
+        elif family.lower() == "bernoulli":
+            self.dist = dist.Bernoulli
+            self.link = sigmoid
+        else:
+            raise NotImplementedError
+
+        def _numpyro_model():
+            beta0 = numpyro.sample("beta0", dist.Normal(0.0, 10.0))
+            beta1 = numpyro.sample("beta1", dist.Normal(0.0, 10.0))
+
+            sigmasq_inv_unc = numpyro.sample("sigma_unc", ImproperUniform())
+            sigmasq_inv = jnp.exp(sigmasq_inv_unc)
+            numpyro.factor("sigma", dist.Gamma(.5, 0.5).log_prob(sigmasq_inv) + sigmasq_inv_unc)
+
+            sigma = 1 / jnp.sqrt(sigmasq_inv)
+            b = numpyro.sample("b", dist.Normal(0.0, sigma).expand([self.n]))
+
+            eta = beta0 + beta1 * self.x + b.reshape(-1, 1)
+
+            numpyro.sample("y", self.dist(self.link(eta)), obs=self.y)
+
+        self.numpyro_model = _numpyro_model
+        self._seeded_model = numpyro.handlers.seed(_numpyro_model, jax.random.key(0))
+
+    def _log_prob(self, x):
+        params = {
+            "sigma_unc": x[0],
+            "beta0": x[1],
+            "beta1": x[2],
+            "b": x[3:],
+        }
+        logp = log_density(self._seeded_model, (), {}, params)[0]
+        return logp
+
+    log_prob = jax.jit(_log_prob, static_argnums=(0,))
+
+    def param_constrain(self, X):
+        if X.ndim == 1:
+            return jnp.array([jnp.exp(-0.5 * X[0]), X[1:]])
+        if X.ndim == 2:
+            return jnp.hstack([jnp.exp(-0.5 * X[:, 0:1]), X[:, 1:]])
+        
+    def param_unc_names(self):
+        return ['sigma_unc', 'beta0', 'beta1', 'b']
+    
+    def reparametrize(self, x):
+        sigmasq_inv = jnp.exp(x[0])
+        beta0 = x[1]
+        beta1 = x[2]
+        b = x[3:]
+        cond_var = 1 / (sigmasq_inv + jnp.sum(self.hess_at_mle, 1))
+        cond_mean = -cond_var * (jnp.sum(self.hess_at_mle * (beta0 + beta1 * self.x - self.eta_mle), 1))
+        b_new = (b - cond_mean) / jnp.sqrt(cond_var)
+        x_new = jnp.concatenate([x[:3], b_new])
+        return x_new
+    
+    def reparametrize_inv(self, x):
+        sigmasq_inv = jnp.exp(x[0])
+        beta0 = x[1]
+        beta1 = x[2]
+        b = x[3:]
+        cond_var = 1 / (sigmasq_inv + jnp.sum(self.hess_at_mle, 1))
+        cond_mean = -cond_var * (jnp.sum(self.hess_at_mle * (beta0 + beta1 * self.x - self.eta_mle), 1))
+        b_orig = b * jnp.sqrt(cond_var) + cond_mean
+        x_orig = jnp.concatenate([x[:3], b_orig])
+        return x_orig
+    
+    def _log_prob_reparam(self, x):
+        x_orig = self.reparametrize_inv(x)
+        logp = self.log_prob(x_orig)
+        sigmasq_inv = jnp.exp(x[0])
+        cond_var = 1 / (sigmasq_inv + jnp.sum(self.hess_at_mle, 1))
+        log_det = 0.5 * jnp.sum(jnp.log(cond_var))
+        return logp + log_det
+    
+    log_prob_reparam = jax.jit(_log_prob_reparam, static_argnums=(0,))
