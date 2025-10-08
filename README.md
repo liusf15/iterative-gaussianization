@@ -2,8 +2,12 @@
 
 ![Ring](experiments/gifs/ring.gif)
 
+This repository contains the code for reproducing the experiments in *Rotated Mean-Field Variational Inference and Iterative Gaussianization*.
 
-Iterative construction of transport maps that push the standard Gaussian forward to a target distribution specified by an unnormalized density. The transformations alternate between rotations and coordinatewise maps. The rotations are chosen via a score-based PCA procedure, while the coordinatewise maps are obtained by solving mean-field variational inference problems.
+The algorithm constructs a transport map that iteratively pushes a target distribution toward a standard Gaussian. Each iteration alternates between two steps:
+
+- **Relative score PCA**: Compute the principal components of a cross-covariance matrix involving the target's score to determine the rotation;
+- **MFVI**: Perform mean-field variational inference for the rotated target to obtain a coordinatewise transformation.
 
 ## Installation
 ```
