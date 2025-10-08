@@ -6,20 +6,21 @@ from jax.scipy.stats import multivariate_normal as mvn
 from projection_vi.flows import ComponentwiseFlow
 from projection_vi.utils import sample_ortho
 
-def MFVIStep(logp_fn, d, flow, nsample, key, beta_0=.1, learning_rate=1e-3, max_iter=1000):
+def MFVIStep(logp_fn, d, flow, nsample, key, beta_0=1., learning_rate=1e-3, max_iter=1000, T_anneal=None):
     key, subkey = jax.random.split(key)
     params = flow.init(subkey, jnp.zeros((1, d)))
 
     key, subkey = jax.random.split(key)
     base_samples = jax.random.normal(subkey, shape=(nsample, d))
 
-    T = int(0.8 * max_iter)
+    if T_anneal is None:
+        T_anneal = int(0.8 * max_iter)
 
     @jax.jit
     def reverse_kl(params, t):
         X, log_det = flow.apply(params, base_samples)
-        t_ = jnp.clip(t, 0, T)
-        beta_t = 1 - .5 * (1 + jnp.cos(jnp.pi * t_ / T)) * (1 - beta_0)
+        t_ = jnp.clip(t, 0, T_anneal)
+        beta_t = 1 - .5 * (1 + jnp.cos(jnp.pi * t_ / T_anneal)) * (1 - beta_0)
         logp = jax.vmap(logp_fn)(X) * beta_t
         logp = jnp.where(jnp.abs(logp) < 1e10, logp, jnp.nan)
         logq = mvn.logpdf(base_samples, mean=jnp.zeros(d), cov=jnp.eye(d))
@@ -62,7 +63,6 @@ def ScorePCA(logp_fn, d, nsample, key, gamma=0.9):
     base_samples = jax.random.normal(key, shape=(nsample, d))
     scores = jax.vmap(jax.grad(logp_fn))(base_samples) + base_samples
     H = scores.T @ base_samples / nsample
-    # print("trace(H)", jnp.trace(H))
     H_2 = H @ H.T
     eigvals, eigvecs, = jnp.linalg.eigh(H_2)
     eigvals = eigvals[::-1]
