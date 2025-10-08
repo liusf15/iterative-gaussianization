@@ -13,7 +13,7 @@ numpyro.set_host_device_count(20)
 
 print(jax.local_device_count())
 
-def main(posterior_name, num_warmup, num_samples, num_chains, save_samples=False):
+def main(posterior_name, num_warmup, num_samples, num_chains, save_samples=False, num_save=2000):
     data_file = f"stan/{posterior_name}.json"
     target = getattr(Targets, posterior_name)(data_file)
 
@@ -45,7 +45,7 @@ def main(posterior_name, num_warmup, num_samples, num_chains, save_samples=False
         pickle.dump({'moments_1': moments_1, 'moments_2': moments_2}, f)
     
     if save_samples:
-        samples_unc = samples_unc[::samples_unc.shape[0] // 2000]
+        samples_unc = samples_unc[::samples_unc.shape[0] // num_save]
         pd.DataFrame(samples_unc).to_csv(f'experiments/posteriordb_experiment/references/{posterior_name}_mcmc_samples_unc.csv')
 
 if __name__ == '__main__':
@@ -54,6 +54,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_warmup', type=int, default=25_000)
     parser.add_argument('--num_samples', type=int, default=50_000)
     parser.add_argument('--num_chains', type=int, default=20)
+    parser.add_argument('--num_save', type=int, default=2000)
     parser.add_argument('--save_samples', action='store_true')
     args = parser.parse_args()
-    main(args.posterior_name, args.num_warmup, args.num_samples, args.num_chains, save_samples=args.save_samples)
+    main(args.posterior_name, args.num_warmup, args.num_samples, args.num_chains, save_samples=args.save_samples, num_save=args.num_save)
