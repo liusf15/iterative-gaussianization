@@ -58,6 +58,18 @@ def PullbackTarget(logp_fn, flow, params):
     return logp_pullback
 
 def ScorePCA(logp_fn, d, nsample, key, gamma=0.9):
+    """
+    Computes principal components of H = Cov(x, \nabla \log p(x) + x)
+    Args:
+        logp_fn (Callable): log density function of the target distribution.
+        d (int): Dimensionality of the input space.
+        nsample (int): Number of samples to use for estimating the score.
+        key (jax.random.PRNGKey): JAX random key
+        gamma (float, optional): Fraction of total variance to retain in PCA. If 0, returns identity matrix. 
+            If < 1, selects enough components to explain gamma fraction of variance. Defaults to 0.9.
+    Returns:
+        jnp.ndarray: Matrix of principal component vectors (shape: [d, rank]), where 'rank' is the number of components retained.
+    """
     if gamma == 0:
         return jnp.eye(d)
     base_samples = jax.random.normal(key, shape=(nsample, d))
@@ -122,7 +134,33 @@ def apply_householder_transpose(W, x):
     x = jax.lax.fori_loop(0, r, lambda k, x: body(k, x), x)
     return x
 
-def iterative_gaussianization(logp_fn, d, nsample, key, gamma, npca=None, random_rotate=False, niter=5, opt_params={'beta_0': .1, 'learning_rate': 1e-3, 'max_iter': 1000}, flow_params={'num_bins': 10, 'range_min': -5., 'range_max': 5., 'boundary_slopes': 'unconstrained'}):
+def iterative_gaussianization(logp_fn, 
+                              d, 
+                              nsample, 
+                              key, 
+                              gamma, 
+                              npca=None, 
+                              random_rotate=False, 
+                              niter=5, 
+                              opt_params={'beta_0': 1., 'learning_rate': 1e-3, 'max_iter': 1000}, 
+                              flow_params={'num_bins': 10, 'range_min': -5., 'range_max': 5., 'boundary_slopes': 'unconstrained'}):
+    """
+    Constructs a sequence of rotations and coordinatewise maps to Gaussianize a target distribution.
+    Args:
+        logp_fn (callable): Log-probability function of the target distribution.
+        d (int): Dimensionality of the data.
+        nsample (int): Number of samples to use in each iteration.
+        key (jax.random.PRNGKey): JAX random key
+        gamma (float): the top eigenvectors that explain at least `gamma` fraction of the total variance are used for the rotation
+        npca (int, optional): Number of samples to use for PCA. Defaults to `nsample` if None.
+        random_rotate (bool, optional): If True, uses random orthogonal rotations; otherwise uses ScorePCA. Defaults to False.
+        niter (int, optional): Number of Gaussianization iterations. Defaults to 5.
+        opt_params (dict, optional): Optimization parameters for MFVIStep. Defaults to {'beta_0': 1., 'learning_rate': 1e-3, 'max_iter': 1000}.
+        flow_params (dict, optional): Parameters for the ComponentwiseFlow. Defaults to {'num_bins': 10, 'range_min': -5., 'range_max': 5., 'boundary_slopes': 'unconstrained'}.
+    Returns:
+        flow (ComponentwiseFlow): The trained componentwise flow model.
+        transforms (list): List of tuples containing rotation matrices and flow parameters for each iteration.
+    """
     flow = ComponentwiseFlow(d, **flow_params)
     logp_k = logp_fn
     if npca is None:
@@ -149,6 +187,18 @@ def iterative_gaussianization(logp_fn, d, nsample, key, gamma, npca=None, random
     return flow, transforms
 
 def iterative_forward_map(flow, transforms, samples):
+    """
+    Applies a sequence of transformations to the input samples using the provided flow and Householder matrices.
+    Args:
+        flow (ComponentwiseFlow): ComponentwiseFlow object
+        transforms (list): A list of tuples, where each tuple contains a Householder matrix `W_k` and parameters `param_k` for the flow. The transformations are applied in reverse order.
+        samples (jax.numpy.ndarray): The input samples to be transformed.
+    Returns:
+        tuple:
+            - samples (jax.numpy.ndarray): The transformed samples after applying all flows and Householder transformations.
+            - logdet (float): The log-determinant of the Jacobian from all flow transformations.
+    """
+
     logdet = 0.
     for W_k, param_k in transforms[::-1]:
         samples, _logdet = flow.apply(param_k, samples)
