@@ -108,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument('--nsample', type=int, default=5000)
     parser.add_argument('--beta_0', type=float, default=.5)
     parser.add_argument('--lr', type=float, default=0.1)
-    parser.add_argument('--max_iter', type=int, default=200)
+    parser.add_argument('--max_iter', type=int, default=100)
     parser.add_argument('--gamma', type=float, default=0.95)
     parser.add_argument('--savepath', type=str, default='experiments/results/glmm')
 
