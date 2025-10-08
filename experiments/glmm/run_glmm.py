@@ -3,25 +3,11 @@ import jax.numpy as jnp
 import argparse
 import os
 import pickle
-import pandas as pd
 
 from projection_vi.utils import softplus, inverse_softplus
 from projection_vi.iterative_gaussianization import *
 from projection_vi.flows import BlockAffineFlow, AffineFlow
 from experiments.targets import GLMM
-
-def load_reference_moments():
-    with open (f"experiments/posteriordb_experiment/references/glmm_n_{n}_mcmc_moments.pkl", "rb") as f:
-        reference_moments = pickle.load(f)
-    ref_moment_1 = reference_moments['moments_1'].mean(0)
-    ref_moment_2 = reference_moments['moments_2'].mean(0)
-    return ref_moment_1, jnp.sqrt(ref_moment_2 - ref_moment_1**2)
-
-def load_reference_samples():
-    filename = f'experiments/posteriordb_experiment/references/GLMM_n_{n}_mcmc_samples_unc.csv'
-    samples = pd.read_csv(filename, index_col=0).values
-    samples = target.param_constrain(samples)
-    return samples
 
 def metrics(samples):
     metrics = {}
