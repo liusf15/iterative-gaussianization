@@ -27,17 +27,16 @@ def median_heuristic(x_samples: jnp.ndarray, y_samples: jnp.ndarray = None) -> f
     if y_samples is None:
         samples = x_samples
         n = samples.shape[0]
-        # Compute pairwise distances within x_samples
-        diffs = samples[:, None, :] - samples[None, :, :]  # (n, n, d)
-        distances = jnp.sqrt(jnp.sum(diffs**2, axis=-1))  # (n, n)
-        # Get upper triangular part (excluding diagonal)
+
+        diffs = samples[:, None, :] - samples[None, :, :]  
+        distances = jnp.sqrt(jnp.sum(diffs**2, axis=-1))  
+
         triu_indices = jnp.triu_indices(n, k=1)
         pairwise_distances = distances[triu_indices]
     else:
-        # Compute distances between x_samples and y_samples
         nx, ny = x_samples.shape[0], y_samples.shape[0]
-        diffs = x_samples[:, None, :] - y_samples[None, :, :]  # (nx, ny, d)
-        distances = jnp.sqrt(jnp.sum(diffs**2, axis=-1))  # (nx, ny)
+        diffs = x_samples[:, None, :] - y_samples[None, :, :]  
+        distances = jnp.sqrt(jnp.sum(diffs**2, axis=-1))  
         pairwise_distances = distances.flatten()
     
     return jnp.median(pairwise_distances)
@@ -49,28 +48,25 @@ def compute_ksd(samples: jnp.ndarray,
                 beta: float = -0.5) -> float:
     n_samples, dim = samples.shape
     
-    # Compute scores
     scores = jax.vmap(score_fn)(samples)
     
-    # Use median heuristic if bandwidth not provided
     if bandwidth is None:
         bandwidth = median_heuristic(samples)
         if bandwidth == 0:
             bandwidth = 1.0
     
-    # Compute pairwise differences and distances
-    x_diff = samples[:, None, :] - samples[None, :, :]  # (n, n, d)
-    distances_sq = jnp.sum(x_diff**2, axis=-1)  # (n, n)
+    x_diff = samples[:, None, :] - samples[None, :, :]  
+    distances_sq = jnp.sum(x_diff**2, axis=-1)  
     
     if kernel_type == 'rbf':
         # k(x,y) = exp(-||x-y||^2 / (2*h^2))
-        k_xy = jnp.exp(-distances_sq / (2 * bandwidth**2))  # (n, n)
+        k_xy = jnp.exp(-distances_sq / (2 * bandwidth**2))  
         
         # ∇_x k(x,y) = k(x,y) * (y-x) / h^2
-        grad_k = k_xy[:, :, None] * (-x_diff) / (bandwidth**2)  # (n, n, d)
+        grad_k = k_xy[:, :, None] * (-x_diff) / (bandwidth**2)  
         
         # ∇_y k(x,y) = k(x,y) * (x-y) / h^2  
-        grad_k_y = k_xy[:, :, None] * x_diff / (bandwidth**2)  # (n, n, d)
+        grad_k_y = k_xy[:, :, None] * x_diff / (bandwidth**2) 
         
         # trace(∇_x ∇_y k(x,y)) = k(x,y) * (d/h^2 - ||x-y||^2/h^4)
         trace_hess = k_xy * (dim / (bandwidth**2) - distances_sq / (bandwidth**4))
@@ -81,7 +77,7 @@ def compute_ksd(samples: jnp.ndarray,
         k_xy = jnp.power(k_base, beta)  # (n, n)
         
         # ∇_x k(x,y) = 2β * k(x,y) * (x-y) / (h^2 + ||x-y||^2)
-        grad_k = 2 * beta * k_xy[:, :, None] * x_diff / k_base[:, :, None]  # (n, n, d)
+        grad_k = 2 * beta * k_xy[:, :, None] * x_diff / k_base[:, :, None] 
         grad_k_y = -grad_k  # ∇_y k(x,y) = -∇_x k(x,y)
         
         # trace(∇_x ∇_y k(x,y)) for IMQ
@@ -90,23 +86,20 @@ def compute_ksd(samples: jnp.ndarray,
     else:
         raise ValueError(f"Unknown kernel type: {kernel_type}")
     
-    # Compute Stein kernel elements
     # Term 1: score_x^T score_y k(x,y)
-    term1 = jnp.sum(scores[:, None, :] * scores[None, :, :], axis=-1) * k_xy  # (n, n)
+    term1 = jnp.sum(scores[:, None, :] * scores[None, :, :], axis=-1) * k_xy  
     
     # Term 2: score_x^T ∇_y k(x,y)
-    term2 = jnp.sum(scores[:, None, :] * grad_k_y, axis=-1)  # (n, n)
+    term2 = jnp.sum(scores[:, None, :] * grad_k_y, axis=-1) 
     
     # Term 3: score_y^T ∇_x k(x,y)
-    term3 = jnp.sum(scores[None, :, :] * grad_k, axis=-1)  # (n, n)
+    term3 = jnp.sum(scores[None, :, :] * grad_k, axis=-1) 
     
     # Term 4: trace(∇_x ∇_y k(x,y))
-    term4 = trace_hess  # (n, n)
+    term4 = trace_hess 
     
-    # Sum all terms
     stein_kernel_matrix = term1 + term2 + term3 + term4
     
-    # KSD^2 is the average
     ksd_squared = jnp.mean(stein_kernel_matrix)
     
     return jnp.sqrt(jnp.maximum(ksd_squared, 0.0))
@@ -118,27 +111,25 @@ def mmd_squared(x_samples: jnp.ndarray,
                 **kernel_kwargs) -> float:
     nx, ny = x_samples.shape[0], y_samples.shape[0]
     
-    # Use median heuristic for bandwidth if needed
     if bandwidth is None and kernel_type in ['rbf', 'imq', 'laplace']:
         bandwidth = median_heuristic(x_samples, y_samples)
         if bandwidth == 0:
             bandwidth = 1.0
     
     if kernel_type == 'rbf':
-        # Compute pairwise squared distances efficiently
         def compute_rbf_terms():
             # ||x_i - x_j||² for all i,j
-            x_sq = jnp.sum(x_samples**2, axis=1, keepdims=True)  # (nx, 1)
-            x_dists_sq = x_sq + x_sq.T - 2 * jnp.dot(x_samples, x_samples.T)  # (nx, nx)
+            x_sq = jnp.sum(x_samples**2, axis=1, keepdims=True) 
+            x_dists_sq = x_sq + x_sq.T - 2 * jnp.dot(x_samples, x_samples.T)  
             k_xx = jnp.exp(-x_dists_sq / (2 * bandwidth**2))
             
             # ||y_i - y_j||² for all i,j  
-            y_sq = jnp.sum(y_samples**2, axis=1, keepdims=True)  # (ny, 1)
-            y_dists_sq = y_sq + y_sq.T - 2 * jnp.dot(y_samples, y_samples.T)  # (ny, ny)
+            y_sq = jnp.sum(y_samples**2, axis=1, keepdims=True)  
+            y_dists_sq = y_sq + y_sq.T - 2 * jnp.dot(y_samples, y_samples.T)  
             k_yy = jnp.exp(-y_dists_sq / (2 * bandwidth**2))
             
             # ||x_i - y_j||² for all i,j
-            xy_dists_sq = x_sq + y_sq.T - 2 * jnp.dot(x_samples, y_samples.T)  # (nx, ny)
+            xy_dists_sq = x_sq + y_sq.T - 2 * jnp.dot(x_samples, y_samples.T)  
             k_xy = jnp.exp(-xy_dists_sq / (2 * bandwidth**2))
             
             return k_xx, k_yy, k_xy
@@ -149,7 +140,6 @@ def mmd_squared(x_samples: jnp.ndarray,
         beta = kernel_kwargs.get('beta', -0.5)
         
         def compute_imq_terms():
-            # Compute squared distances
             x_sq = jnp.sum(x_samples**2, axis=1, keepdims=True)
             x_dists_sq = x_sq + x_sq.T - 2 * jnp.dot(x_samples, x_samples.T)
             k_xx = jnp.power(bandwidth**2 + x_dists_sq, beta)
@@ -168,7 +158,6 @@ def mmd_squared(x_samples: jnp.ndarray,
     else:
         raise NotImplementedError(f"Kernel type '{kernel_type}' not implemented.")
     
-    # Compute unbiased MMD² estimate
     k_xx_off_diag = k_xx - jnp.diag(jnp.diag(k_xx))
     k_yy_off_diag = k_yy - jnp.diag(jnp.diag(k_yy))
     
@@ -197,7 +186,7 @@ def compute_mmd(x_samples: jnp.ndarray,
         MMD value (always non-negative)
     """
     mmd_sq = mmd_squared(x_samples, y_samples, kernel_type, bandwidth, **kernel_kwargs)
-    return jnp.sqrt(jnp.maximum(mmd_sq, 0.0))  # Ensure non-negative
+    return jnp.sqrt(jnp.maximum(mmd_sq, 0.0))  
 
 def wasserstein_1d(x, y, p=2):
     x = jnp.sort(x)
