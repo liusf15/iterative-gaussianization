@@ -9,6 +9,8 @@ import jax.numpy as jnp
 from jax.scipy.optimize import minimize
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpyro
+from numpyro.infer import NUTS, MCMC
 import numpy as np
 
 from projection_vi import ComponentwiseFlow, MFVIStep
@@ -18,7 +20,8 @@ from experiments.compare_rotations.rotations import (
     compute_relative_score_pca_rotation
 )
 
-
+numpyro.set_host_device_count(5)
+    
 def setup_target(d: int, N: int, prior_scale: float, seed: int, kappa: float = 1.0):
     """Create BLR target with synthetic data."""
     key1, key2, key3 = jax.random.split(jax.random.key(seed), 3)
@@ -32,9 +35,37 @@ def setup_target(d: int, N: int, prior_scale: float, seed: int, kappa: float = 1
     target = BLR(X=X, y=y, prior_scale=prior_scale)
     return target
 
+def run_mcmc(target, num_samples, thinning=1):
+    """Generate MCMC reference samples."""
+    num_warmup = 10*target.d
+    num_chains = 5
 
-def run_method_on_target(target, method_name: str, key, fit_config, scale=None, shift=None):
-    """Run MFVI method and return training losses."""
+    nuts_kernel = NUTS(target.numpyro_model)
+    mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples*thinning, num_chains=num_chains, thinning=thinning, progress_bar=False)
+    mcmc.run(jax.random.key(0))
+
+    mcmc_samples = mcmc.get_samples()
+
+    param_names = target.param_unc_names()
+    samples_unc = None
+    for key in param_names:
+        sample = mcmc_samples[key]
+        if sample.ndim == 1:
+            sample = sample.reshape(-1, 1)
+        if samples_unc is None:
+            samples_unc = sample
+        else:
+            samples_unc = jnp.concatenate([samples_unc, sample], axis=1)
+
+    samples = target.param_constrain(samples_unc)
+
+    samples = jnp.array(samples)
+    moments_1 = jnp.mean(samples, axis=0)
+    moments_2 = jnp.mean(samples**2, axis=0)
+    return samples, {'moments_1': moments_1, 'moments_2': moments_2}
+
+def run_method_on_target(target, method_name: str, key, fit_config, scale=None, shift=None, return_samples=False):
+    """Run MFVI method and return training losses and optionally samples."""
     if scale is None:
         scale = jnp.ones(target.d)
     if shift is None:
@@ -44,7 +75,7 @@ def run_method_on_target(target, method_name: str, key, fit_config, scale=None, 
     def log_prob_fn(x):
         return target.log_prob(x * scale + shift) + jnp.sum(jnp.log(scale))
 
-    key1, key2 = jax.random.split(key, 2)
+    key1, key2, key3 = jax.random.split(key, 3)
 
     # Compute rotation matrix
     rotation_matrix = None
@@ -87,12 +118,29 @@ def run_method_on_target(target, method_name: str, key, fit_config, scale=None, 
         max_iter=fit_config['num_iterations']
     )
 
-    return training_losses
+    if return_samples:
+        # Generate samples
+        base_samples = jax.random.normal(key3, (fit_config.get('num_samples_eval', 2000), target.d))
+        spline_samples, log_det = flow.apply(params, base_samples)
+
+        if rotation_matrix is not None:
+            samples = jax.vmap(lambda x: rotation_matrix @ x)(spline_samples)
+        else:
+            samples = spline_samples
+
+        samples = samples * scale + shift
+        return training_losses, samples
+    else:
+        return training_losses
 
 
 def run_all_methods(target_config, fit_config, num_repeats=5):
-    """Run all methods multiple times and return all losses."""
+    """Run all methods multiple times and return all losses and samples from first run."""
     target = setup_target(**target_config)
+
+    # Generate MCMC reference samples
+    print(f"Running MCMC for N={target_config['N']}...")
+    mcmc_samples, _ = run_mcmc(target, num_samples=2000, thinning=5)
 
     if fit_config['laplace_init']:
         def neg_logp_fn(x):
@@ -108,6 +156,7 @@ def run_all_methods(target_config, fit_config, num_repeats=5):
 
     methods = ['standard', 'active_subspace', 'relative_score_pca']
     all_runs_results = {method: [] for method in methods}
+    first_run_samples = {}
 
     print(f"Running {num_repeats} repetitions for N={target_config['N']}...")
     print("="*80)
@@ -117,16 +166,26 @@ def run_all_methods(target_config, fit_config, num_repeats=5):
         print(f"  Run {run_idx + 1}/{num_repeats}")
 
         for method in methods:
+            # Get samples only from first run
+            return_samples = (run_idx == 0)
             result = run_method_on_target(
-                target, method, key, fit_config, shift=shift, scale=scale
+                target, method, key, fit_config, shift=shift, scale=scale,
+                return_samples=return_samples
             )
-            all_runs_results[method].append(result)
 
-    return all_runs_results
+            if return_samples:
+                training_losses, samples = result
+                all_runs_results[method].append(training_losses)
+                first_run_samples[method] = samples
+            else:
+                all_runs_results[method].append(result)
+
+    return all_runs_results, first_run_samples, mcmc_samples
 
 
 def plot_comparison(all_results_dict, d, prior_scale, kappa, num_iterations, output_dir):
     """Create comparison plot with 3 subplots for N=10, 20, 30."""
+    sns.set_theme(context='paper', style='whitegrid', font_scale=1.3)
     methods = ['standard', 'active_subspace', 'relative_score_pca']
     method_labels = {
         'standard': 'Standard',
@@ -140,12 +199,12 @@ def plot_comparison(all_results_dict, d, prior_scale, kappa, num_iterations, out
         'relative_score_pca': 'crimson'
     }
 
-    fig, axes = plt.subplots(1, 3, figsize=(8, 3))
+    fig, axes = plt.subplots(1, 3, figsize=(7, 3))
     N_values = [10, 20, 30]
 
     for ax_idx, N in enumerate(N_values):
         ax = axes[ax_idx]
-        all_runs_results = all_results_dict[N]
+        all_runs_results = all_results_dict[N]['losses']
 
         for method in methods:
             all_losses = np.array(all_runs_results[method])
@@ -167,20 +226,66 @@ def plot_comparison(all_results_dict, d, prior_scale, kappa, num_iterations, out
         ax.set_xlabel('Iteration')
         if ax_idx == 0:
             ax.set_ylabel('Training Loss')
-        ax.set_title(f'N={N}')
-        ax.grid(True, alpha=0.3)
+        ax.set_title(fr'$n$={N}')
+
         if ax_idx == 2:
-            ax.legend(fontsize=9)
+            ax.legend(fontsize=8, loc='upper right')
 
     plt.tight_layout()
     plot_filename = os.path.join(
         output_dir,
         f"training_loss_comparison_d{d}_prior{prior_scale}_kappa{kappa}_iter{num_iterations}.pdf"
     )
-    plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
+    plt.savefig(plot_filename, bbox_inches='tight')
     plt.close()
 
     print(f"Comparison plot saved to: {plot_filename}")
+
+
+def plot_scatter_comparison(all_results_dict, d, prior_scale, kappa, num_iterations, output_dir):
+    """Create scatter plots for first 2 variables for each N."""
+    sns.set_theme(context='paper', style='whitegrid', font_scale=1.5)
+    methods = ['standard', 'relative_score_pca']
+    method_labels = {
+        'standard': 'Standard',
+        'relative_score_pca': 'Relative Score PCA'
+    }
+
+    colors = {
+        'standard': 'blue',
+        'relative_score_pca': 'crimson',
+        'mcmc': 'deepskyblue'
+    }
+
+    N_values = [10, 20, 30]
+
+    for N in N_values:
+        
+        
+        first_run_samples = all_results_dict[N]['samples']
+        mcmc_samples = all_results_dict[N]['mcmc_samples']
+
+        # First subfigure: MCMC + Standard
+        def make_scatter_plot(ax, samples):
+            ax.scatter(mcmc_samples[:, 0], mcmc_samples[:, 2], marker='o', alpha=0.4, label='Target', c='deepskyblue')
+            ax.scatter(samples[:, 0], samples[:, 2], marker='v', alpha=0.5, label='Samples', c='crimson')
+
+        fig, axes = plt.subplots(1, 2, figsize=(6, 3), sharex=True, sharey=True)
+        make_scatter_plot(axes[0], first_run_samples['standard'])
+        axes[0].set_title('Standard MFVI')
+        make_scatter_plot(axes[1], first_run_samples['relative_score_pca'])
+        axes[1].set_title('MFVI with PCA rotation')
+
+        plt.tight_layout()
+
+        plot_filename = os.path.join(
+            output_dir,
+            f"scatter_N{N}_d{d}_prior{prior_scale}_kappa{kappa}_iter{num_iterations}.pdf"
+        )
+        plt.savefig(plot_filename, bbox_inches='tight')
+        plt.close()
+
+        print(f"Scatter plot for N={N} saved to: {plot_filename}")
 
 
 def main():
@@ -204,6 +309,7 @@ def main():
         'learning_rate': args.learning_rate,
         'num_bins': args.num_bins,
         'num_samples_train': args.num_samples_train,
+        'num_samples_eval': 2000,
         'range_min': -5.0,
         'range_max': 5.0,
         'laplace_init': True
@@ -221,10 +327,21 @@ def main():
             'kappa': args.kappa,
         }
 
-        all_results_dict[N] = run_all_methods(target_config, fit_config, num_repeats=args.nrep)
+        losses, samples, mcmc_samples = run_all_methods(target_config, fit_config, num_repeats=args.nrep)
+        all_results_dict[N] = {'losses': losses, 'samples': samples, 'mcmc_samples': mcmc_samples}
 
     # Create comparison plot
     plot_comparison(
+        all_results_dict,
+        args.d,
+        args.prior_scale,
+        args.kappa,
+        args.num_iterations,
+        args.output_dir
+    )
+
+    # Create scatter plots
+    plot_scatter_comparison(
         all_results_dict,
         args.d,
         args.prior_scale,
